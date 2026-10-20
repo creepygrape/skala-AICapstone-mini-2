@@ -1,6 +1,6 @@
 # WISH FINDER — NCT WISH 장면 찾기 AI Agent
 
-> **현재 상태:** 개발 전 기획·설계 초안(실행 가능한 애플리케이션은 아직 없음)
+> **현재 상태:** Day 1 기본 검색 웹 구현. 실제 MCP stdio + BM25/Dense/RRF + 원문 cue 검증이 동작합니다. 의미 검증 Graph·재검색·POST SSE는 Day 2 작업입니다.
 
 ## 문제와 목표
 
@@ -27,3 +27,54 @@
 웹에서 장면 질문 → SSE 진행 단계 표시 → SRT 원문/시점 검증 → 결과 카드 → YouTube 해당 구간 링크.
 
 기술적 입력 제약: 확보 가능한 일부 스크립트는 영어 번역문이며 화자 라벨이 없다. 실제 영상에 한국어·일본어 화면 자막이 있다는 사실과 구분한다.
+
+## 로컬 실행
+
+Python 3.11과 Node.js가 필요합니다. 패키지·모델 다운로드는 사전에 승인된 범위에서만 실행합니다.
+
+```sh
+uv pip install --python .venv/bin/python -r backend/requirements.txt
+npm --prefix frontend ci
+```
+
+실제 corpus는 `data/manifest.local.json`에 등록합니다. 공개 예시는 `data/manifest.example.json`이며, 합성 fixture는 실제 영상 자료가 아닙니다. manifest의 자막 경로는 프로젝트 기준 `data/` 아래에 있어야 합니다. 원본 자막·인덱스·로컬 manifest는 Git에서 제외합니다.
+
+기존 로컬 bge-m3 캐시만 사용합니다. 자동 모델 다운로드는 하지 않습니다. 캐시가 다른 위치라면 `WISH_EMBEDDING_PATH`에 완전한 로컬 모델 경로를 지정하세요.
+
+```sh
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
+```
+
+별도 터미널:
+
+```sh
+npm --prefix frontend run dev -- --port 5173
+```
+
+브라우저에서 `http://127.0.0.1:5173/`에 접속합니다. 백엔드 lifespan이 실제 MCP 서버를 시작하고 종료합니다. MCP 서버만 따로 실행하려면 `.venv/bin/python -m backend.app.mcp.server`를 사용합니다(stdout은 프로토콜 전용).
+
+공개 합성 fixture만 사용하는 keyword 모드는 다음과 같습니다. 이 모드는 다국어 Hybrid/Agent 품질 검증을 대체하지 않습니다.
+
+```sh
+WISH_MANIFEST=data/manifest.example.json WISH_KEYWORD_ONLY=1 .venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
+```
+
+## 검증
+
+```sh
+.venv/bin/python -m pytest backend/tests -q
+npm --prefix frontend run test -- --run
+npm --prefix frontend run build
+```
+
+테스트에는 합성 자료를 이용한 실제 stdio MCP·LangGraph·JSON API 연결이 포함됩니다. 로컬 실제 corpus 검사는 파일이 없으면 skip합니다. 외부 자막은 배포하지 않으므로 제3자는 동일한 실제 corpus 평가를 즉시 재현할 수 없습니다.
+
+브라우저 smoke 검증은 API와 Vue를 실행한 후 별도 Chrome CDP 포트 9223에서 `scripts/browser_smoke.py`를 사용합니다. 결과 화면은 `/private/tmp/wish-finder-day1.png`에 저장됩니다.
+
+## 현재 한계
+
+- Day 1 결과는 검색 후보입니다. 원문·시각의 결정적 검증은 했지만 의미 검증은 아직 없어 `partial`과 `semantic_verification_skipped`를 반환합니다. Final C 성공으로 집계하지 않습니다.
+- 한국어 기본 검색은 료칸 질문에서 정답이 2위에 나오는 사례가 있습니다. [Day 1 기록](docs/reports/day1.md)에 실제 관측을 남깁니다.
+- 영상 제목은 미확인 표시를 사용합니다. 영상 시각과 SRT 시각의 실제 일치 및 자막 이용 출처·조건은 추가 확인이 필요합니다.
+- 화자는 항상 미확인입니다. 모델이 화면·음성을 이해한 서비스가 아닙니다.
+- 원본을 반환하는 검색 도구와 의미 검증·최대 2회 재검색·POST SSE의 통합은 Day 2에 마무리합니다.

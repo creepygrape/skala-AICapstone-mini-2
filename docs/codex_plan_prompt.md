@@ -24,8 +24,8 @@
 
 - SRT 파싱/시간정보/원문 cue 보존/청킹
 - BM25 키워드와 다국어 Dense 검색을 결합한 Hybrid Retrieval
-- 실제 FastMCP 서버와 LangGraph 도구 호출
-- Router, Search, Evidence Verification, 최대 1회 Dynamic Replanning
+- 공식 MCP Python SDK 2.x (`mcp>=2,<3`)의 `MCPServer` 서버와 LangGraph 도구 호출
+- Router, Search, Evidence Verification, 조건부 최대 2회 Dynamic Replanning(최초 검색 포함 최대 3라운드, `attempt=0/1/2`)
 - FastAPI JSON API 및 `POST /api/search/stream`의 SSE 이벤트
 - Vue 웹: 질문 입력, 진행 상태, 근거 결과 카드, 타임스탬프 링크, 오류 표시
 - 원문 인용 검증 / 근거 없는 화자 추정 차단
@@ -47,8 +47,8 @@
 
 - 데이터/청킹: cue 구조, 보존 정책, 20초/10초 윈도우 가설과 트레이드오프
 - 검색: BM25, 다국어 임베딩, RRF, 한국어→영어 검색 재구성 사용 여부의 **측정 가능한 비교안**
-- LangGraph: State 타입, 노드 입출력, 조건부 edge, 재검색 카운터/종료조건, Search/Verification 책임 경계
-- MCP: 서버 transport, Tool 3종 입력/반환/오류, lifespan 초기화·종료, 툴 호출 데모 방법
+- LangGraph: State 타입, 노드 입출력, 조건부 edge, 재검색 카운터(`MAX_REPLAN_ROUNDS=2`, `attempt=0/1/2`)/조기 종료·최대 3라운드 종료조건, Search/Verification 책임 경계
+- MCP: 공식 SDK 2.x의 `MCPServer`, 로컬 stdio, Tool 3종 입력/반환/오류, Tool/Resource/Prompt 기능 유지(Resource/Prompt 확장은 P1), lifespan 초기화·종료, 설치 버전의 LangGraph/클라이언트 API 확인과 실제 호출 데모 방법. SDK 1.x로 다운그레이드하지 말 것
 - API/SSE: 구체적 JSON·이벤트 계약, `fetch` 스트림 파서, HTTP 오류와 SSE 오류 구분, 검증된 결과만 전송
 - UI: 페이지 최소 와이어프레임/컴포넌트, 데모 사용자 시나리오 3개
 - 품질: 근거 없는 인용 방지, 화자 질문, 영상에 없는 장면, MCP 에러, no-result/fallback

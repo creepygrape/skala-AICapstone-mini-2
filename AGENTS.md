@@ -14,7 +14,7 @@
 ## 2. 우선순위 / 일정
 
 - 마감: Day 3 13:00 이전 Git URL과 결과보고서 링크 등록; 그 전에 UI·API·Agent 연결 완료.
-- P0: ADR, SRT/Cue 파싱, BM25+다국어 Dense 검색, LangGraph 라우팅/검색/맥락 확인/검증/최대 1회 재검색, 실제 FastMCP 도구 연동, **FastAPI+웹 UI+POST SSE**, 근거 링크, 실패 처리, 평가/테스트/추적.
+- P0: ADR, SRT/Cue 파싱, BM25+다국어 Dense 검색, LangGraph 라우팅/검색/맥락 확인/검증/최대 2회 재검색, 공식 MCP Python SDK 2.x의 MCPServer 도구 연동, **FastAPI+웹 UI+POST SSE**, 근거 링크, 실패 처리, 평가/테스트/추적.
 - Day 1 종료 목표: 브라우저 → API → 기본 검색 결과. Day 2 종료: Agent/MCP/SSE E2E. Day 3 오전: 평가/회고 자료/제출.
 - P1/P2를 P0보다 앞당기지 마라. 화자 자동 추론, 대규모 자막 크롤링, OCR, ASR, 소셜 기능, 무거운 디자인은 범위 밖.
 
@@ -41,9 +41,10 @@
 - `speaker=null`에서 발화자 단정 금지. 언급된 멤버와 발언자를 구별한다.
 - 검색/시간/ID 검증은 결정적 Python 로직; 의미적 관련성 검증은 필요한 경우 LLM을 사용한다.
 - Search와 Verification을 역할별 계약으로 분리하되, 진짜 독립 sub-agent가 아니라면 'Multi-Agent'라고 과장하지 않는다.
-- 재검색은 조건부 **최대 1회**, LLM/Tool 시간 제한을 둔다. 결과가 없으면 `not_found`, 근거 없이 확정할 수 없으면 `unsupported/ambiguous`.
+- 재검색은 조건부 **최대 2회**(최초 검색 포함 최대 3라운드, `attempt=0/1/2`, `MAX_REPLAN_ROUNDS=2`), LLM/Tool 시간 제한을 둔다. 결과가 없으면 `not_found`, 근거 없이 확정할 수 없으면 `unsupported/ambiguous`.
 - 응답 스트리밍: `routing/searching/validating/replanning/result/error/done` 이벤트. **검증 전 답변/허위 결과는 스트리밍하지 않는다.** POST SSE 클라이언트는 `fetch` 스트림 파서를 사용한다.
 - 백엔드 lifespan에서 Agent/인덱스/MCP 연결을 준비하고 요청별 재초기화 금지. 종료 시 리소스 정리.
+- MCP는 공식 Python SDK 2.x (`mcp>=2,<3`)의 `MCPServer`를 사용한다. SDK 1.x로 다운그레이드하지 않고 별도 `fastmcp` 패키지를 도입하지 않는다. Tool/Resource/Prompt 기능과 로컬 stdio 구조를 유지하며 Resource/Prompt 확장은 기존 P1이다. LangGraph 연동은 실제 설치 버전에서 확인한다.
 - API/도구 인터페이스는 Pydantic 타입 및 docstring으로 입력·출력·오류를 명시한다.
 
 ## 6. 데이터 / 저작권 / 보안
