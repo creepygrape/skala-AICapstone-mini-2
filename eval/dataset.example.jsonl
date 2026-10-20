@@ -1,0 +1,1 @@
+{"id": "synthetic-dev-01", "query": "RIKU chose RIKU", "split": "dev", "category": "synthetic", "answerability": "scene_supported", "expected_video_id": "SYNTHETIC01", "accepted_intervals": [[3, 4]], "evidence_cue_ids": ["2"], "label_status": "draft"}

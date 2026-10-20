@@ -23,3 +23,5 @@ dist/
 .DS_Store
 *.sqlite3
 *.db
+# Local Vite/Vitest execution cache
+/frontend/.vite/

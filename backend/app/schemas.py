@@ -34,7 +34,7 @@ class Video(BaseModel):
     language: str = "en"
     license_or_source_note: str = "사용자 제공 로컬 자막. 이용 조건 확인 필요."
     title_verified: bool = False
-    timing_verified: bool = False
+    timing_verified: bool = Field(default=False, description="사용자의 일부 시점 표본 확인. 전체 cue 검증 아님.")
 
     @property
     def url(self):
@@ -62,7 +62,7 @@ class MetadataReply(BaseModel):
     title: str
     url: str
     title_verified: bool
-    timing_verified: bool
+    timing_verified: bool = Field(description="사용자의 일부 시점 표본 확인. 전체 cue 검증 아님.")
 
 
 class SearchRequest(BaseModel):
