@@ -20,7 +20,6 @@ class Question(BaseModel):
     evidence_cue_ids: list[str]
     expected_speaker_status: Literal['unknown'] = 'unknown'
     label_status: Literal['draft','accepted'] = 'draft'
-    video_timing_verified: bool = False
 
     @model_validator(mode='after')
     def check_labels(self):
@@ -57,3 +56,7 @@ def validate_source_labels(rows, catalog):
             if cue is None or not any(start<=cue.start_seconds and cue.end_seconds<=end
                                       for start,end in row.accepted_intervals):
                 raise ValueError(f'Invalid source label: {row.id}:{cue_id}')
+        for start, end in row.accepted_intervals:
+            if not any(start <= cues[cue_id].start_seconds and cues[cue_id].end_seconds <= end
+                       for cue_id in row.evidence_cue_ids):
+                raise ValueError(f'Unbacked accepted interval: {row.id}:{start}-{end}')

@@ -114,4 +114,5 @@ def test_user_sampled_timing_flag_is_reflected_in_metadata_and_warnings(monkeypa
         body=client.post('/api/search',json={'query':'RIKU'}).json()
         assert body['results']
         assert 'video_timing_unverified' not in body['warnings']
+        assert 'video_timing_sampled' in body['warnings']
         assert 'semantic_verification_skipped' in body['warnings']

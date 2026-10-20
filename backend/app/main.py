@@ -10,22 +10,11 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException
 
 from backend.app.mcp.client import connect
-from backend.app.mcp.search_gate import SearchBusyError
-from backend.app.schemas import (ContextReply, MetadataReply, SearchReply,
-                                 SearchRequest, SearchResponse)
-from backend.app.services.evidence import verify_candidate
+from backend.app.schemas import MetadataReply, SearchRequest, SearchResponse
+from backend.app.services.search import SearchFailure, call_tool as call, search_and_verify
 from backend.app.services.video_catalog import load_videos
 
 logger = logging.getLogger("wish_finder")
-
-
-async def call(session, name, arguments, schema):
-    result = await session.call_tool(name, arguments, read_timeout_seconds=30)
-    if result.is_error and any('search_busy:' in getattr(c,'text','') for c in result.content):
-        raise SearchBusyError('search_busy')
-    if result.is_error or result.structured_content is None:
-        raise RuntimeError(f"MCP tool failed: {name}")
-    return schema.model_validate(result.structured_content)
 
 
 @asynccontextmanager
@@ -81,33 +70,15 @@ async def search(request: SearchRequest):
     app.state.busy=True
     request_id=str(uuid4());start=time.monotonic()
     try:
-        async with asyncio.timeout(60):
-            mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid'
-            reply=await call(app.state.session,'search_transcripts',{'query':request.query,'mode':mode,'top_k':3},SearchReply)
-            results=[]
-            warnings=['semantic_verification_skipped','speaker_unknown']
-            for candidate in reply.candidates:
-                context=await call(app.state.session,'get_scene_context',{
-                    'video_id':candidate.chunk.video_id,'start_seconds':candidate.chunk.start_seconds,
-                    'window_seconds':20},ContextReply)
-                metadata=app.state.videos[candidate.chunk.video_id]
-                if not metadata.timing_verified and 'video_timing_unverified' not in warnings:
-                    warnings.append('video_timing_unverified')
-                try:
-                    results.append(verify_candidate(candidate,context,metadata))
-                except ValueError:
-                    logger.warning('candidate_rejected request_id=%s', request_id)
-                    if 'evidence_rejected' not in warnings:
-                        warnings.append('evidence_rejected')
-            status = 'partial' if results else ('unsupported' if reply.candidates else 'not_found')
-            return SearchResponse(request_id=request_id,status=status,
-                                  search_attempts=1,results=results,
-                                  warnings=warnings)
-    except SearchBusyError:
-        raise HTTPException(503,detail={'request_id':request_id,'message':'이전 검색을 마무리 중입니다. 잠시 후 다시 시도해 주세요.'}) from None
-    except Exception:
-        logger.exception('search_failed request_id=%s',request_id)
-        raise HTTPException(503,detail={'request_id':request_id,'message':'검색 도구에 오류가 발생했습니다. 다시 시도해 주세요.'}) from None
+        mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid'
+        execution = await search_and_verify(app.state.session, request.query, mode,
+            app.state.videos, request_id=request_id, tool_call=call)
+        return execution.response
+    except SearchFailure as exc:
+        logger.warning('search_failed request_id=%s code=%s', request_id, exc.code)
+        message = ('이전 검색을 마무리 중입니다. 잠시 후 다시 시도해 주세요.'
+                   if exc.code == 'search_busy' else '검색 도구에 오류가 발생했습니다. 다시 시도해 주세요.')
+        raise HTTPException(503,detail={'request_id':request_id,'message':message,'code':exc.code}) from None
     finally:
         app.state.busy=False
         logger.info('search request_id=%s elapsed_seconds=%.3f',request_id,time.monotonic()-start)

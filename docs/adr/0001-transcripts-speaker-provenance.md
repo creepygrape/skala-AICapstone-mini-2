@@ -28,3 +28,7 @@ SRT의 개별 cue를 변경 불가능한 근거 단위로 저장한다. `speaker
 ## PR #1 리뷰 반영 — 검증 실패 분리
 
 원문 검증에 실패한 후보는 제외하고 `evidence_rejected` 경고를 남긴다. 남은 유효 후보가 있으면 Day 1의 `partial` 결과를 유지하며, 후보는 있으나 전부 검증 실패하면 `unsupported`를 반환한다. 정상적인 검색 0건(`not_found`)과 MCP 도구 장애(503)를 구별한다. URL은 메타데이터 문자열을 그대로 붙이지 않고 검증된 영상 ID·시각을 받는 공통 함수에서 생성한다. 화자 null과 원문 인용 정책은 유지한다.
+
+## PR #2 시각 상태 의미
+
+기존 timing_verified 필드는 호환성을 위해 유지하되 의미는 사용자 표본 확인이다. 성공적으로 검증된 결과의 영상에만 video_timing_sampled 또는 video_timing_unverified 경고를 붙인다. 전체 cue 시각 검증 완료라고 해석하지 않는다. 평가 라벨의 별도 시각 불리언은 제거하고 manifest를 단일 출처로 사용한다.
