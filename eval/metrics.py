@@ -26,9 +26,9 @@ def answerability_metrics(question, response):
     return {
         'not_found_correct': (valid and response.status == 'not_found' and not response.results)
                              if question.answerability == 'not_found' else None,
-        'speaker_unknown_correct': (valid and 'speaker_unknown' in response.warnings and
-            all(r.speaker is None and r.speaker_status == 'unknown' for r in response.results))
-            if question.answerability == 'speaker_unknown' else None,
+        # A/B's constant warning/null field cannot measure speaker-query recognition.
+        'speaker_unknown_correct': None,
+        'speaker_unknown_reason': 'constant_speaker_warning',
         'unsupported_correct': None,
         'unsupported_reason': ('baseline_has_no_intent_router'
             if question.answerability == 'visual_unsupported' else 'no_applicable_question'),
@@ -64,7 +64,7 @@ def summarize(records, tasks):
             'scene_success_at_1':accuracy([r['metrics']['scene_success_at_1'] for r in scenes], planned=scene_count),
             'hit_at_3':accuracy([r['metrics']['hit_at_3'] for r in scenes], planned=scene_count),
             'not_found_accuracy':accuracy([r['answerability_metrics']['not_found_correct'] for r in group], planned=negatives),
-            'speaker_unknown_accuracy':accuracy([r['answerability_metrics']['speaker_unknown_correct'] for r in group], planned=speakers),
+            'speaker_unknown_accuracy':accuracy([], planned=speakers, reason='constant_speaker_warning'),
             'unsupported_accuracy':accuracy([], planned=visuals, reason='baseline_has_no_intent_router'),
             'unsupported_speaker_assertions':sum(r['answerability_metrics']['unsupported_speaker_assertions'] for r in group),
             'mean_seconds':round(mean(r['latency_seconds'] for r in group),4) if group else None,

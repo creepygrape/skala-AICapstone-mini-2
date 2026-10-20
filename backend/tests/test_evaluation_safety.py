@@ -58,8 +58,9 @@ def test_abstention_and_speaker_metrics_are_separate_from_visual_capability():
     error=response.model_copy(update={'status':'error'})
     assert answerability_metrics(negative,error)['not_found_correct'] is False
     speaker=q.model_copy(update={'answerability':'speaker_unknown'})
-    assert answerability_metrics(speaker,response)['speaker_unknown_correct'] is True
-    assert answerability_metrics(speaker,error)['speaker_unknown_correct'] is False
+    assert answerability_metrics(speaker,response)['speaker_unknown_correct'] is None
+    assert answerability_metrics(speaker,error)['speaker_unknown_correct'] is None
+    assert answerability_metrics(speaker,response)['speaker_unknown_reason']=='constant_speaker_warning'
     visual=q.model_copy(update={'answerability':'visual_unsupported'})
     assert answerability_metrics(visual,response)['unsupported_correct'] is None
     assert answerability_metrics(visual,response)['unsupported_reason']=='baseline_has_no_intent_router'
@@ -68,6 +69,19 @@ def test_abstention_and_speaker_metrics_are_separate_from_visual_capability():
     assert summary['unsupported_accuracy']['accuracy'] is None
     assert summary['unsupported_accuracy']['planned_denominator']==1
     assert summary['scene_success_at_1']['accuracy'] is None
+
+
+def test_baseline_speaker_accuracy_is_na_even_with_speaker_questions():
+    q=load_questions(ROOT/'eval/dataset.example.jsonl')[0].model_copy(
+        update={'answerability':'speaker_unknown'})
+    response=SearchResponse(request_id='test',status='not_found',search_attempts=1,warnings=['speaker_unknown'])
+    record={'condition':'raw_ko','system':'A','status':response.status,'metrics':None,
+            'answerability_metrics':answerability_metrics(q,response),'latency_seconds':0.01}
+    summary=summarize([record],[{'condition':'raw_ko','system':'A','question':q}])[0]
+    assert summary['speaker_unknown_accuracy']=={
+        'correct':0,'denominator':0,'planned_denominator':1,
+        'accuracy':None,'reason':'constant_speaker_warning'}
+    assert summary['unsupported_speaker_assertions']==0
 
 
 @pytest.mark.parametrize('behavior,complete,executed',[('tool_error',True,4),('fatal',False,2)])
