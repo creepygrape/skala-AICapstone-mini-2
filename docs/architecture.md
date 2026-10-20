@@ -15,7 +15,7 @@ flowchart TB
   R -->|장면 검색| P[Search Planner]
   R -->|화자 확인 불가 / 범위 밖| F[제한 안내]
   P --> SA[Search Agent]
-  SA -->|MCP stdio| M[MCP Server / FastMCP]
+  SA -->|MCP stdio| M[MCP Server / MCPServer]
   M --> H[Hybrid Retrieval\nBM25 + Dense/RRF]
   H --> DB[(SRT index + Video Metadata)]
   SA --> C[Context Expansion]
@@ -23,7 +23,7 @@ flowchart TB
   C --> VA[Verification Agent\n근거+의미 검증]
   VA --> D{충분한 근거?}
   D -->|예| O[Structured Result]
-  D -->|아니오, 0회 재계획| RP[Query Rewrite\n최대 1회]
+  D -->|아니오, 재계획 2회 미만| RP[Query Rewrite\n최대 2회]
   RP --> SA
   D -->|아니오, 재계획 소진| NF[not_found / unsupported]
   O --> API
@@ -43,9 +43,9 @@ flowchart TB
 | Backend | Python 3.11+, FastAPI, Pydantic | API 계약, 비동기 SSE, LangGraph와 일관된 런타임 |
 | Graph | LangGraph | 조건 라우팅, 재검색 상한, 상태 추적 |
 | Agent 역할 | Search Agent, Verification Agent, Supervisor | 각 역할과 출력 계약 구분. 단순 노드와 독립 sub-agent를 혼동하지 않기 |
-| MCP | FastMCP, 로컬 stdio | 재사용 가능한 검색·문맥 조회 도구. 프로세스/SDK 차이는 실제 환경에서 확인 |
+| MCP | 공식 MCP Python SDK 2.x (`mcp>=2,<3`), `MCPServer`, 로컬 stdio | Tool/Resource/Prompt 기능 유지. 설치 버전에서 클라이언트 연동·수명 검증 |
 | Keywords | BM25 (`rank_bm25` 또는 동급) | 이름·고유명사, 영문 검색어 처리 |
-| Dense/Store | 다국어 embedding + Chroma(또는 동급 로컬 DB) | 한국어 입력 ↔ 영어 인덱스; 모델 다운로드/품질 실측 필요 |
+| Dense/Store | 로컬 bge-m3 + NumPy 벡터 파일 | 단일 MCP 프로세스에서 로드, 자동 모델 다운로드 금지; ADR-0002 참조 |
 | Fusion | Reciprocal Rank Fusion(RRF) | 서로 다른 스코어 단위를 보정하는 간단한 순위 통합 |
 | Source of truth | 로컬 SRT + video manifest(JSON/SQLite) | 인용/시간을 반드시 원본 cue에서 역조회 |
 | Tracking | LangSmith + 로컬 JSON 로그 | 단계별 지연, 호출, 에러. LangSmith 비활성 환경에서도 실행 유지 |
@@ -97,7 +97,7 @@ class FinderState(TypedDict, total=False):
     intent: Literal["scene_search", "speaker_query", "unsupported", "chat"]
     query_terms: list[str]
     query_en: str | None
-    attempt: int                 # 초기 = 0, 재계획 후 = 1
+    attempt: int                 # 최초 검색 = 0, 재검색 = 1 또는 2 (최대 3라운드)
     candidate_chunks: list[dict]
     evidence_items: list[dict]
     validation: dict             # is_grounded, relevant, reason, can_answer_speaker
@@ -119,12 +119,13 @@ class FinderState(TypedDict, total=False):
 
 ### 4.3 상한 및 검증 순서
 
-- 검색 초기 시도: `attempt = 0`, 최대 재검색 1회(`attempt = 1`).
-- 처음부터 무조건 재검색하지 않는다. 검색 후보·근거의 부족/오탐 가능성이 있을 때만.
+- `MAX_REPLAN_ROUNDS=2`: 최초 검색은 `attempt=0`, 재검색은 `attempt=1`, `attempt=2`로 최초 검색 포함 최대 3라운드다. 충분한 근거가 있으면 조기 종료한다.
+- 처음부터 무조건 재검색하지 않는다. 검색 후보·근거의 부족/오탐 가능성이 있고 `attempt < MAX_REPLAN_ROUNDS`일 때만 Replan으로 이동해 카운터를 1 증가시킨다. `attempt=2`에서는 재검색하지 않는다. 도구 장애·timeout은 오류 경로로 처리한다.
 - 원문 인용/시간/비디오 ID를 결정적 로직으로 검증하고, 의미 관련성을 Agent가 추가 평가.
 - Validator가 실패하면 이미 생성한 미검증 초안은 **화면에 내보내지 않음**.
 - 재검색 실패 후 결과가 없다면 `not_found`; 범위 밖이면 `unsupported`; 일부 유효 후보만 있으면 `partial` 또는 `ambiguous`.
-- 무한 루프 방지: `MAX_REPLAN_ROUNDS=1`, LLM 호출 timeout, 전체 요청 timeout.
+- 무한 루프 방지: `MAX_REPLAN_ROUNDS=2`, LLM/Tool 호출 timeout, 전체 요청 timeout. 시간 예산이 소진되면 남은 라운드가 있어도 종료한다.
+- SSE `attempt`는 0/1/2이고 `search_attempts`는 실제 실행한 검색 라운드 수(검색하지 않으면 0, 최대 3)다. `replanning`은 최대 2회이며 근거 검증 전 결과를 보내지 않는다.
 
 ## 5. MCP 인터페이스
 
@@ -137,6 +138,15 @@ class FinderState(TypedDict, total=False):
 | `get_video_metadata` | `video_id: str` | 제목·원본 URL·자막 상태 | 미등록 영상이면 명확한 오류 |
 
 도구 docstring에 목적·입력·출력·제약·예외를 명확하게 기술한다. 정적 카탈로그 Resource(`wishfinder://videos/catalog`)와 표준 검색 Prompt는 P1이다. 사용자가 자막 파일의 로컬 경로를 Tool 인자로 임의 지정하지 못하도록 한다.
+
+### 5.1 SDK와 LangGraph 연결 기준
+
+- 공식 `mcp>=2,<3`의 `from mcp.server.mcpserver import MCPServer`를 사용한다. 서버는 `MCPServer(...)`로 구성하고 `run(transport="stdio")`로 실행한다. SDK 1.x 또는 별도 `fastmcp` 패키지로 대체하지 않는다.
+- Tool/Resource/Prompt는 `tool()`, `resource(uri)`, `prompt()`로 등록할 수 있다. 기존 읽기 전용 Tool 계약과 Resource/Prompt 확장의 P1 우선순위를 유지한다.
+- 설치 환경에서 확인한 버전은 `mcp 2.3.0`, `langgraph 1.2.16`이다. 클라이언트는 `mcp.client.stdio`의 `StdioServerParameters`·`stdio_client`, `mcp.client.session`의 `ClientSession`을 사용한다.
+- FastAPI lifespan의 같은 비동기 task에서 `AsyncExitStack`으로 stdio transport와 세션을 열고 `await session.initialize()`한다. 종료도 같은 수명 관리 경계에서 수행한다.
+- LangGraph의 비동기 노드는 준비된 세션을 의존성으로 받아 `await session.call_tool(...)`을 호출한다. `StateGraph.add_node`와 `add_conditional_edges`로 경로를 구성하며, 요청별 subprocess·인덱스 재생성은 금지한다. 별도 LangChain MCP adapter는 현재 설치되어 있지 않으며 필수 의존성으로 가정하지 않는다.
+- Day 1에 실제 stdio 초기화·합성 Tool 호출·같은 세션의 LangGraph 연속 호출·정상 종료를 테스트했다. JSON API는 실제 검색 MCP 도구 3종을 호출한다. 전체 Agent 경로·취소·장애 복구는 Day 2 검증 대상이다. docs/reports/day1.md 참조.
 
 ## 6. API 및 SSE 구조
 
@@ -184,7 +194,7 @@ data: {"request_id":"req-123","status":"found"}
 | Dense 모델 초기화 실패 | 장애 표시 + 가용한 keyword-only 결과를 `partial`로 반환 가능. Dense가 실행된 것처럼 표시 금지 |
 | MCP subprocess 중단 | 제한된 재연결/도구 실패 구분; 검증되지 않은 결과 생성 금지 |
 | LLM timeout | 정해진 timeout 내 제한된 재시도 또는 `partial/error`로 종료 |
-| 검색 결과 없음 | query rewrite 1회 → 없으면 `not_found` |
+| 검색 결과 없음 | 근거 부족 시 query rewrite 최대 2회(최대 3라운드) → 끝까지 근거가 없으면 `not_found` |
 | 화자 식별 질문 | 장면은 검색하되 화자는 `unknown`으로 명시 |
 | SSE 네트워크 단절 | 프런트 오류 + 재검색 버튼. 요청 결과가 전송됐다고 성공 처리하지 않음 |
 | LangSmith 접속 실패 | 추적만 비활성화/로컬 로그로 복구, 핵심 검색 기능 유지 |
@@ -241,7 +251,7 @@ wish-finder/
 - ADR-0001: 자막 정보와 화자 미식별 처리
 - ADR-0002: Hybrid Search와 다국어 질의 처리
 - ADR-0003: LangGraph 역할 분리 및 bounded replanning
-- ADR-0004: 로컬 FastMCP subprocess 경계
+- ADR-0004: 공식 MCP SDK 2.x MCPServer와 로컬 stdio subprocess 경계
 - ADR-0005: Vue + FastAPI POST SSE
 - ADR-0006: 원문 cue 보존/윈도우 청킹/근거 회귀 검증
 
@@ -255,3 +265,9 @@ wish-finder/
 6. Day 3 13:00 제출을 고려한 Phase 1 범위 잠금.
 
 위 사항은 Codex Plan Mode에서 **검토와 제안**까지만 수행한다. 사용자 승인 전 실제 구현·리팩터링·커밋 금지.
+
+## 12. Day 1 구현 상태
+
+`POST /api/search`는 실제 MCP 검색 → 문맥 → 메타데이터를 호출하고 원문 cue에서 인용·시각·URL을 결정적으로 구성한다. 검색 후보에 `selected_cue_id`를 추가해 문맥·chunk cue IDs 내 포함 여부를 검증한다. 의미 검증을 생략한 후보는 `partial`과 경고로 반환하며 최종 Agent 결과로 취급하지 않는다. JSON API는 Day 2에 Graph와 통합한다.
+
+API는 단일 worker·동시 검색 1건을 사용하며 추가 검색은 503으로 거절한다. 모델과 인덱스는 MCP 서버에만 로드한다. `/health`, `/ready`, `/api/videos`를 제공한다. POST SSE는 아직 미구현이다.

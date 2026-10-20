@@ -7,14 +7,17 @@
 ## 작업 시작 전 (사용자)
 
 - 과제 2 주제와 핵심 기능 리스트를 Google Spreadsheet 과제 등록란에 기입한다.
-- NCT WISH 스크립트가 있는 영상 3개의 SRT와 영상 URL/제목을 로컬에 확보한다. 첫 번째 SRT는 제공됨; 나머지 둘은 미제공.
+- NCT WISH 스크립트가 있는 영상 3개의 SRT와 영상 URL/제목을 로컬에 확보한다. 세 영상 SRT와 URL은 확보됨; 제목·자료 이용 조건·시간 정합성 확인은 남음.
 - 신규 Git 저장소를 준비하고, 공개 업로드 시 원본 SRT와 `.env`는 반드시 제외한다.
 - Codex를 Plan Mode로 실행하여 `AGENTS.md`와 문서 3종·ADR 검토, 환경 조사, 위험·구현계획을 보고받는다. **계획 승인 전 코드 변경하지 않는다.**
+
+기술 기준은 공식 `mcp>=2,<3`의 `MCPServer`다. Tool/Resource/Prompt와 로컬 stdio 구조를 유지하며 Resource/Prompt 확장은 기존 P1이다. LangGraph는 설치된 SDK의 비동기 클라이언트 세션을 이용해 호출하고 실제 연결 시험으로 확인한다. SDK 1.x로 다운그레이드하지 않는다.
 
 ## Day 1 — 데이터 검색 + Web 수직 슬라이스
 
 | 단계 | 작업 | 완료 정의 |
 |---|---|---|
+| D1-0 | 공식 MCP SDK 2.x MCPServer·stdio 클라이언트 API 확인 및 연결 시험 | initialize·도구 목록·시험 호출 성공; API 확인과 실제 통신 성공을 구분해 기록 |
 | D1-1 | 영상 manifest 수동 작성, raw SRT 경로/권한 확인 | ID/URL/자막 경로를 정확히 식별 |
 | D1-2 | SRT 파서 + cue 저장 + 청킹 + 회귀 테스트 | 누락 없는 타임스탬프·원문 보존 |
 | D1-3 | BM25 Baseline + Dense/Hybrid 검색 | 고정 질문 5개로 탐색 비교 가능 |
@@ -27,9 +30,9 @@
 
 | 단계 | 작업 | 완료 정의 |
 |---|---|---|
-| D2-1 | FastMCP Tool 3종과 연결 테스트 | Agent에서 MCP로 실제 조회 |
+| D2-1 | MCPServer Tool 3종과 stdio 연결 테스트 | Agent에서 MCP로 실제 조회 |
 | D2-2 | Router/Planner/Search/Context/Verification Graph | 요청 1건 완주, 원문 검증 |
-| D2-3 | 최대 1회 재검색·fallback·오류 처리 | 무한 반복/허위 화자/없는 출처 차단 |
+| D2-3 | 조건부 최대 2회 재검색·fallback·오류 처리 | attempt=0/1/2, 최대 3라운드 및 조기 종료 검증; 무한 반복/허위 화자/없는 출처 차단 |
 | D2-4 | FastAPI SSE + Vue fetch 스트림 | 검색/검증 이벤트·결과/오류 실시간 표시 |
 | D2-5 | 필수 E2E 시나리오 고정 | 마니또 03:09, 료칸 02:15~, 없는 근거 질문 통과 |
 
@@ -60,8 +63,15 @@
 - [ ] SRT cue에 화자 없음·괄호 편집 설명 구분
 - [ ] 브라우저 입력/결과 카드/영상 클릭
 - [ ] POST SSE의 progress/error/done 정상 처리
-- [ ] MCP 실제 Tool 호출과 LangGraph 재검색/Validator
+- [ ] MCPServer의 실제 stdio Tool 호출과 LangGraph 연결 검증
+- [ ] 재검색 0/1/2회·최대 3라운드 상한·Validator·조기 종료 검증
 - [ ] 같은 질문셋 A/B/C 정량 평가(실측 기준)
 - [ ] ADR 원인/결정/대안/검증/재검토 기입
 - [ ] 공개 저장소에 원문 SRT·비밀값 없음
 - [ ] Day 3 13:00 전 제출
+
+## Day 1 진행 기록
+
+2026-10-20: 실제 stdio MCP·LangGraph 합성 호출, 원문 파싱 3,750 cue, 청킹 869개, 로컬 Dense 인덱스, MCP 경유 JSON API, Vue 검색 카드와 실제 Chrome 입력/결과 링크 검증 완료. 상세 명령·실측·미측정 항목은 `reports/day1.md`에 기록한다.
+
+남은 준비 항목: 영상별 수동 시각 확인, 제목·자막 출처 확인, gold set 초안/확정. Day 2에는 의미 검증·조건부 재검색(최대 2회)·SSE와 장애 경로를 통합한다.

@@ -1,0 +1,16 @@
+# Python 3.11. Install into the repository's existing .venv.
+# Official MCP SDK 2.x provides MCPServer; do not downgrade to SDK 1.x.
+fastapi==0.150.0
+uvicorn==0.54.0
+pydantic==2.14.1
+langgraph==1.2.16
+mcp>=2,<3
+rank-bm25==0.2.2
+sentence-transformers==6.1.0
+torch==2.14.1
+numpy==2.4.6
+pytest==9.1.1
+httpx==0.28.1
+langsmith==0.14.11
+# Existing CDP browser smoke transport (scripts/browser_smoke.py).
+websockets==16.1.1

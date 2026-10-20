@@ -1,0 +1,8 @@
+[
+  {
+    "video_id": "SYNTHETIC01",
+    "title": "합성 테스트 영상 (실제 영상 아님)",
+    "transcript_file": "data/fixtures/synthetic.srt",
+    "license_or_source_note": "프로젝트가 작성한 합성 fixture. 실제 영상과 무관함."
+  }
+]

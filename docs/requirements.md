@@ -24,7 +24,7 @@
 | 첫 업로드 영상 | YouTube `1HJgbE66GI4` | 최초 통합 테스트 대상 |
 | 업로드 SRT | 1,534개 자막 구간, 마지막 자막 종료 시점 약 01:01:23 | 원본으로 보존; 시간 코드 유지 |
 | 함께 업로드한 TXT | 추출 스크립트의 텍스트형 보조 파일 | 가능하면 SRT 우선 |
-| 추가 영상 | 사용자가 스크립트 있는 영상 2개를 더 발견함. **파일은 아직 제공되지 않음** | 데이터가 들어오면 동일 파이프라인으로 수용 |
+| 추가 영상 | `camp_1.srt` (`vWjPXwKV_Y8`, 1,558 cue), `oth_5.srt` (`zOgJILPNzbE`, 658 cue) 확보 | 제목·이용 출처·영상 시간 정합성은 미확인; 로컬 manifest로 연결 |
 | 스크립트 언어 | 영어 번역문 | 한국어 질문 → 다국어 의미 검색 / 필요 시 영어 검색어 재구성 |
 | 화자 라벨 | 없음 | `speaker=null`; 멤버 이름 등장과 발화자 식별은 별개 |
 | 괄호 속 화면 설명 | 존재. 예: `(RIKU chose RIKU)` | 검색 가치가 있어 원문 보존 |
@@ -65,7 +65,7 @@
 | FR-04 | Baseline 키워드 검색 | BM25 기반 기본 검색 구현; 평가시 고정 입력 사용 |
 | FR-05 | Hybrid Retrieval | Dense 검색 + BM25 결과를 통합하고 상위 후보 반환 |
 | FR-06 | LangGraph Agent | Router/Planner → Search → Context → Validator → Finalize 경로가 실제 작동 |
-| FR-07 | 동적 재검색 | 근거 불충분 시 검색어/전략 변경 **최대 1회**; 무한 루프 금지 |
+| FR-07 | 동적 재검색 | 근거 불충분 시 검색어/전략 변경 **조건부 최대 2회**(최초 검색 포함 최대 3라운드); 충분한 근거 확보 시 조기 종료, 무한 루프 금지 |
 | FR-08 | MCP Tool | `search_transcripts`, `get_scene_context`, `get_video_metadata` 중 최소 2개 이상을 실제 LangGraph에서 MCP로 호출. 3개 권장 |
 | FR-09 | 근거 검증 | 비디오·타임스탬프·원문 인용 유효성은 코드로 검증; 의미적 적합성은 전담 Validator가 점검 |
 | FR-10 | 화자 단정 방지 | `speaker=null`일 때 발화자를 확정하지 않음. 멤버 `mentioned`는 발화자와 구분 |
@@ -80,6 +80,8 @@
 | FR-19 | 모듈화 | UI / API / Graph / MCP / Retrieval / Evaluation 분리, 환경변수 및 실행 README |
 
 **P0 완성의 의미**: 브라우저에서 실제 질문을 입력해, 업로드한 영상 자막을 검색하고 근거가 있는 시점 링크를 받을 수 있어야 한다. 콘솔에서 함수만 실행되는 것은 미완성이다.
+
+MCP 구현은 공식 Python SDK 2.x (`mcp>=2,<3`)의 `MCPServer`를 사용한다. SDK 1.x로 다운그레이드하지 않으며 Tool/Resource/Prompt 기능과 로컬 stdio 구조를 유지한다. Resource/Prompt 확장의 우선순위는 아래 P1을 유지한다. LangGraph 노드와 MCP 클라이언트의 연동은 설치 버전에서 검증한다.
 
 ### 4.2 P1 — P0 안정화 후 선택
 
@@ -127,7 +129,7 @@
 
 ```text
 event: searching
-data: {"request_id":"<uuid>","message":"관련 장면을 찾고 있어요.","attempt":1}
+data: {"request_id":"<uuid>","message":"관련 장면을 찾고 있어요.","attempt":0}
 
 event: result
 data: {"request_id":"<uuid>","status":"found","results":[{"video_id":"1HJgbE66GI4","start_seconds":189,"end_seconds":191,"evidence_text":"(RIKU chose RIKU)","evidence_type":"editorial","speaker":null,"url":"https://www.youtube.com/watch?v=1HJgbE66GI4&t=189s"}]}
@@ -136,6 +138,8 @@ event: done
 data: {"request_id":"<uuid>","status":"found"}
 
 ```
+
+`attempt`는 최초 검색 0, 첫 재검색 1, 두 번째 재검색 2다. `replanning` 이벤트는 필요한 경우에만 최대 2회 발생한다.
 
 이는 **스키마 예시**이고 첫 이벤트/결과는 실제 검색을 통해 생성해야 한다. 이벤트 순서는 검색 경로에 따라 달라질 수 있으나, 최종 이벤트는 `result` 또는 `error`와 `done`을 구분해 처리한다.
 
@@ -149,7 +153,7 @@ data: {"request_id":"<uuid>","status":"found"}
 - `evidence_text`(실제 자막에 존재하는 문자열), `evidence_type`
 - `speaker`(확인되지 않으면 `null`), `speaker_status`
 - `explanation_ko`(근거로 확인되는 범위의 요약)
-- `search_attempts`, `status`, `request_id`
+- `search_attempts`(실제로 실행한 검색 라운드 수, 검색하지 않으면 0, 최대 3), `status`, `request_id`
 - 모델의 주관적 관련성 점수를 제공한다면 확률처럼 표현하지 않음.
 
 ## 7. 비기능 요구사항
@@ -167,7 +171,7 @@ data: {"request_id":"<uuid>","status":"found"}
 
 - **A**: 단일 키워드 검색(BM25). 단독 검색의 한계를 보여 주되, 한국어→영어 표현 차이의 영향을 별도 설명한다.
 - **B**: 동일 데이터에서 BM25 + Dense + 고정된 Fusion 사용(재계획/검증 없음).
-- **C**: B + Agent의 의도 추출, 최대 1회 재검색, 근거 검증.
+- **C**: B + Agent의 의도 추출, 최대 2회 재검색, 근거 검증.
 - **공정한 추가 비교**: B와 C에 동일한 초깃값의 정규화된 검색어를 주어 **Agent 재검색·검증 자체의 효과**도 별도 확인한다. A/B/C가 다른 모델/번역비용을 쓰면 이를 조건표에 밝힌다.
 
 ### 8.2 필수 지표
@@ -198,21 +202,21 @@ data: {"request_id":"<uuid>","status":"found"}
 - AT-04: '누가 말했다'는 질문에서 검증 불가능한 화자를 임의로 확정하지 않는다.
 - AT-05: 자막에 근거가 없는 요청은 `not_found` 또는 `unsupported`로 종료한다.
 - AT-06: 웹에서 질문 입력 후 SSE 상태 업데이트와 결과 카드 표시가 실제로 동작한다.
-- AT-07: 동적 재검색 반복 상한 초과, MCP 타임아웃, 네트워크 중단을 처리한다.
+- AT-07: 재검색 0/1/2회 종료 경로와 최초 검색 포함 최대 3라운드 상한을 검증하고, MCP 타임아웃·네트워크 중단을 처리한다. 장애를 근거 부족 재검색으로 처리하지 않는다.
 - AT-08: C에 대해 A/B와 동일 고정 질문셋으로 성능 비교표를 생성한다.
 - AT-09: 실행 명령, 환경변수 예시, ADR, 트레이드오프, 회고에 필요한 실험 기록이 남는다.
 
 ## 10. 마일스톤(과제 일정 준수)
 
 - **Day 1**: 자료 사용 조건 확인 → 요구사항/ADR 작성 → SRT 파서와 원문 시간 매핑 → A/B Baseline → FastAPI/웹 검색 뼈대.
-- **Day 2**: MCP Tool 실제 연결 → LangGraph 검색·검증·최대 1회 재계획 → SSE 웹 연동 → 엔드투엔드 시연 완료.
+- **Day 2**: MCP Tool 실제 연결 → LangGraph 검색·검증·최대 2회 재계획 → SSE 웹 연동 → 엔드투엔드 시연 완료.
 - **Day 3 오전(~13:00)**: 정량 평가/회귀 테스트/실패 사례와 한계 정리/문서 정합성 검토/제출 주소 등록.
 - **Day 3 오후**: 발표 대비(설명 가능한 설계 결정, 실측 결과, 데모 안정성 점검).
 
 ## 11. 미결정·승인 필요 항목
 
-- 나머지 SRT 2개의 데이터/사용 허용 여부(현재 미업로드).
-- 실제 코드 저장소 및 기존 코드 재사용 여부.
+- 확보한 세 영상 자막의 이용 출처·사용 허용 여부와 영상 시간 정합성.
+- Git 저장소 연결 완료. 이후 commit/push는 변경 내용 제시와 별도 승인 필요.
 - 기본 LLM/임베딩 실행 환경(로컬 기기 성능, 설치 여부, 유료 API 허가 여부).
 - Vue 3 + Vite 선택에 대한 변경 필요성(기본 제안 유지).
 - 벤치마크의 허용 시간오차 ±10초가 장면 유형에 적합한지 최초 10문항으로 검토.
