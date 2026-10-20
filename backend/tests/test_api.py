@@ -100,3 +100,18 @@ def test_url_builder_validates_id_and_time():
     assert video_url('1HJgbE66GI4',189.606).endswith('&t=189s')
     for video_id,start in [('bad-id',1),('1HJgbE66GI4',-1),('1HJgbE66GI4',float('nan'))]:
         with pytest.raises(ValueError): video_url(video_id,start)
+
+
+def test_user_sampled_timing_flag_is_reflected_in_metadata_and_warnings(monkeypatch,tmp_path):
+    import json
+    rows=json.loads((ROOT/'data/manifest.example.json').read_text())
+    rows[0]['timing_verified']=True
+    manifest=tmp_path/'manifest.json';manifest.write_text(json.dumps(rows))
+    monkeypatch.setenv('WISH_MANIFEST',str(manifest))
+    monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
+    with TestClient(app) as client:
+        assert client.get('/api/videos').json()['videos'][0]['timing_verified']
+        body=client.post('/api/search',json={'query':'RIKU'}).json()
+        assert body['results']
+        assert 'video_timing_unverified' not in body['warnings']
+        assert 'semantic_verification_skipped' in body['warnings']

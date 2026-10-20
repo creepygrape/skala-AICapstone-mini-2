@@ -7,13 +7,18 @@ const busy = ref(false)
 const error = ref('')
 const response = ref(null)
 const videoCount = ref(null)
+const timingSampled = ref(false)
 let controller
 const examples = ['리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면', '료칸이 뭔지 물어본 부분', '료칸이 뭔지 물어본 멤버가 누구야?']
 
 onMounted(async () => {
   try {
     const r = await fetch('/api/videos')
-    if (r.ok) videoCount.value = (await r.json()).videos.length
+    if (r.ok) {
+      const videos = (await r.json()).videos
+      videoCount.value = videos.length
+      timingSampled.value = videos.length > 0 && videos.every(video => video.timing_verified)
+    }
   } catch { /* Search displays its own actionable error. */ }
 })
 onUnmounted(() => controller?.abort())
@@ -58,6 +63,6 @@ async function submit() {
         <div class="card-bottom"><span>화자 미확인 · 번역 자막 기준</span><a :href="item.url" target="_blank" rel="noopener noreferrer">해당 장면 보기 ↗<span class="sr-only"> (YouTube 새 창)</span></a></div>
       </article>
     </section>
-    <footer>영상·음성 자체를 분석하지 않습니다. 원본 영상과 자막 시각의 일치 여부는 추가 확인 중입니다.</footer>
+    <footer>영상·음성 자체를 분석하지 않습니다. {{ timingSampled ? '영상별 일부 시점의 내용 일치를 사용자 표본 확인했습니다. 전체 자막 시각의 정확도를 보장하지는 않습니다.' : '원본 영상과 자막 시각의 일치 여부는 추가 확인 중입니다.' }}</footer>
   </main>
 </template>

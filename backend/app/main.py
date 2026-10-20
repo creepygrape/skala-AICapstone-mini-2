@@ -85,12 +85,14 @@ async def search(request: SearchRequest):
             mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid'
             reply=await call(app.state.session,'search_transcripts',{'query':request.query,'mode':mode,'top_k':3},SearchReply)
             results=[]
-            warnings=['semantic_verification_skipped','speaker_unknown','video_timing_unverified']
+            warnings=['semantic_verification_skipped','speaker_unknown']
             for candidate in reply.candidates:
                 context=await call(app.state.session,'get_scene_context',{
                     'video_id':candidate.chunk.video_id,'start_seconds':candidate.chunk.start_seconds,
                     'window_seconds':20},ContextReply)
                 metadata=app.state.videos[candidate.chunk.video_id]
+                if not metadata.timing_verified and 'video_timing_unverified' not in warnings:
+                    warnings.append('video_timing_unverified')
                 try:
                     results.append(verify_candidate(candidate,context,metadata))
                 except ValueError:
