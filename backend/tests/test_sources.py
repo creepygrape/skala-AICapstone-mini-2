@@ -4,6 +4,7 @@ import pytest
 from backend.app.retrieval.srt_parser import parse_srt
 from backend.app.retrieval.chunker import make_chunks
 from backend.app.services.video_catalog import Catalog, ROOT
+from backend.app.schemas import Cue
 
 
 def test_fixture_preserves_mixed_caption_and_unknown_speakers():
@@ -51,3 +52,39 @@ def test_local_corpus_if_present():
     assert {v:len(c) for v,c in catalog.cues.items()} == {'1HJgbE66GI4':1534,'vWjPXwKV_Y8':1558,'zOgJILPNzbE':658}
     cue=next(c for c in catalog.cues['1HJgbE66GI4'] if c.cue_id=='1220')
     assert cue.end_seconds-cue.start_seconds==pytest.approx(75.091)
+
+
+@pytest.mark.parametrize('previous,current', [('Go','Good morning'),('I',"It's fine"),('we',"we're fine")])
+def test_prefix_dedup_does_not_cut_words(previous,current):
+    cues=[Cue(video_id='SYNTHETIC01',cue_id=str(i),start_seconds=i,end_seconds=i+1,original_text=text)
+          for i,text in enumerate([previous,current],1)]
+    chunks=make_chunks(cues)
+    assert current in chunks[0].text_for_retrieval
+    assert cues[1].original_text==current
+
+
+def test_repeated_complete_prefix_is_removed_only_from_search_text():
+    cues=[Cue(video_id='SYNTHETIC01',cue_id=str(i),start_seconds=i,end_seconds=i+1,original_text=text)
+          for i,text in enumerate(['(Applause everyone)','(Applause everyone) Beef festival?'],1)]
+    chunk=make_chunks(cues)[0]
+    assert chunk.text_for_retrieval=='(Applause everyone)\nBeef festival?'
+    assert cues[1].original_text=='(Applause everyone) Beef festival?'
+    assert chunk.cue_ids==('1','2')
+
+
+def test_srt_multiple_blank_lines_and_structural_spaces_preserve_text(tmp_path):
+    path=tmp_path/'spaced.srt'
+    path.write_text(' 1 \n 00:00:01,000 --> 00:00:02,000 \n  first caption  \n\n \n\n 2 \n00:00:02,000 --> 00:00:03,000 \n second caption ')
+    cues=parse_srt(path,'SYNTHETIC01')
+    assert [c.cue_id for c in cues]==['1','2']
+    assert [c.original_text for c in cues]==['  first caption  ',' second caption ']
+
+
+def test_manifest_resolution_is_independent_of_working_directory(monkeypatch,tmp_path):
+    from backend.app.services.video_catalog import load_videos,resolve_manifest
+    monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
+    expected=resolve_manifest()
+    monkeypatch.chdir(tmp_path)
+    assert resolve_manifest()==expected==ROOT/'data/manifest.example.json'
+    assert load_videos()[0].video_id=='SYNTHETIC01'
+    assert len(Catalog().cues['SYNTHETIC01'])==4

@@ -16,8 +16,11 @@ def parse_srt(path: Path, video_id: str) -> list[Cue]:
     """
     source = path.read_bytes().decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
     cues, ids = [], set()
-    for block in re.split(r"\n[ \t]*\n", source.strip("\n")):
+    for block in re.split(r"\n(?:[ \t]*\n)+", source.strip("\n")):
         lines = block.split("\n")
+        # Normalize structural fields only, never strip original caption text.
+        if len(lines) >= 2:
+            lines[0], lines[1] = lines[0].strip(), lines[1].strip()
         if len(lines) < 3 or not lines[0].isdigit():
             raise ValueError(f"Invalid SRT block in {path.name}")
         match = STAMP.fullmatch(lines[1])

@@ -56,3 +56,20 @@ Agent 조율과 검색·데이터 접근을 분리하고 표준 MCP Tool 인터�
 `backend/tests/test_mcp_transport.py`에서 공식 SDK 2.x의 실제 stdio subprocess·initialize·도구 목록·구조화 Tool 반환을 검증했다. LangGraph 비동기 노드가 같은 세션을 두 번 사용한 뒤 정상 종료했다. SDK 2.x의 Tool 구조화 출력을 위해 Pydantic 반환 타입과 `structured_output=True`를 명시한다.
 
 `backend/tests/test_api.py`는 합성 fixture로 JSON API → 실제 MCP 도구 3종 → 원문 검증 경로를 통과했다. 실제 corpus에서는 Chrome 입력부터 MCP Hybrid 검색 및 cue 69의 189초 링크 렌더링까지 확인했다. 전체 의미 검증 Graph·취소 전파·장애 복구 검증은 여전히 미완료다.
+
+## PR #1 리뷰 반영 — 초기화·실행 배타성·경로
+
+### 배경과 결정
+
+리뷰에서 최초 인덱스 생성(기존 실측 38.02초)에 일반 도구 호출의 30초 제한이 적용되고, API timeout 후 MCP 동기 계산은 계속되는데 새 검색이 진입할 수 있음을 지적했다. SDK 2.3.0은 동기 도구를 `anyio.to_thread.run_sync`로 실행하므로 클라이언트 대기 취소만으로 계산 중단을 보장하지 않는다.
+
+- stdio 세션 초기화 제한은 기본 180초로 늘리고 API의 일반 도구 호출은 명시적으로 30초, 전체 요청은 60초로 유지한다. 180초를 넘으면 시작 실패로 처리한다. 초기 인덱스 사전 빌드 CLI를 별도로 도입하는 대신 현재 lifespan 경계를 유지한다.
+- MCP 검색 작업은 서버의 비차단 `threading.Lock`으로 보호한다. 질의 임베딩·후보 선택·cue 캐시 갱신이 끝나야 잠금을 해제하며, timeout으로 API busy가 풀려도 계산 중에는 새 검색을 `search_busy` ToolError로 즉시 거절한다. 잠금 대기로 검색 큐를 쌓지 않는다.
+- API busy 플래그만 사용하는 대안은 서버의 잔여 계산을 보호하지 못해 제외했다. timeout 때마다 subprocess를 죽이는 대안은 인덱스·모델 재로딩과 메모리/지연을 유발하므로 채택하지 않는다. 강제 계산 중단은 아직 보장하지 않는다.
+- manifest 상대 경로는 API와 MCP가 공유하는 함수에서 프로젝트 루트 기준으로 해석한다. 절대 경로는 그대로 사용한다.
+- 영상 메타데이터는 MCP에서 시작 시 한 번 읽어 API lifespan 동안 캐시한다. 요청마다 MCP 왕복을 반복하지 않는 대신 실행 중 manifest 갱신은 서버 재시작으로 반영한다.
+- 사용하지 않던 `startup_error`는 제거했다. 현재 시작 실패 정책은 fail-fast이며, API가 뜬 채 시작 오류를 `/ready`로 제공한다고 주장하지 않는다.
+
+### 검증
+
+실제 stdio 합성 서버에서 도구별 timeout보다 긴 시작 대기를 허용하고, 느린 동기 검색의 클라이언트 timeout 직후 추가 호출이 `search_busy`로 거절되는지 확인한다. 잔여 작업 완료 뒤 정상 호출이 복구되는지 검사한다. 작업은 실제로 중단하지 않으며, 서버 보호와 큐 미생성을 검증하는 시험이다. API 테스트는 manifest 상대 경로, 메타데이터 캐시, 일반 도구 장애의 503 구분을 확인한다.

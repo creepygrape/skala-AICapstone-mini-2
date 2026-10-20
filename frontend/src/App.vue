@@ -46,9 +46,10 @@ async function submit() {
     <p v-if="busy" role="status" class="notice">관련 자막을 검색하고 원문과 시점을 확인하고 있어요. <button @click="controller?.abort()">취소</button></p>
     <p v-if="error" role="alert" class="notice error">{{ error }}</p>
     <section v-if="response" aria-live="polite" class="results">
-      <h2>{{ response.results.length ? '기억과 가까운 검색 후보' : '관련 자막을 찾지 못했어요' }}</h2>
+      <h2>{{ response.results.length ? '기억과 가까운 검색 후보' : response.status === 'unsupported' ? '원문 근거를 확인하지 못했어요' : '관련 자막을 찾지 못했어요' }}</h2>
       <p v-if="!response.results.length">다른 표현이나 기억나는 단어로 다시 검색해 보세요. 영상에 장면이 없다는 뜻은 아닙니다.</p>
       <p v-else class="notice">현재는 기본 검색 단계입니다. 원문과 시각은 확인했지만 질문과의 의미 일치는 아직 검증하지 않았어요. 자막만으로 발화자는 확인할 수 없습니다.</p>
+      <p v-if="response.warnings.includes('evidence_rejected')" class="notice">원문 근거를 확인하지 못한 후보는 제외했습니다.</p>
       <article v-for="item in response.results" :key="`${item.video_id}:${item.cue_ids.join(',')}`">
         <div class="card-top"><span class="tag">{{ item.evidence_type === 'mixed' ? '대사·편집 설명 혼합' : item.evidence_type === 'editorial' ? '편집 설명' : '원문 자막' }}</span><span>{{ timestamp(item.start_seconds) }} – {{ timestamp(item.end_seconds) }}</span></div>
         <h3>{{ item.title }}</h3>

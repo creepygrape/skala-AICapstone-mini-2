@@ -66,3 +66,7 @@ Day 1은 원문과 시각을 검증한 검색 후보를 보여준다. 의미 검
 Day 2 남은 P0: Router/Planner/Search/Context/Verification/Finalize 제품 Graph, 의미 검증, 조건부 최대 2회 재검색, POST SSE와 fetch 스트림 파서, timeout·취소·MCP 장애 복구·로컬 추적. Resource/Prompt 확장은 P1을 유지한다.
 
 추가 확인: 세 영상별 수동 시간 기준점, 제목과 자막 이용 출처, 고정 gold set 작성·확정. MCP 동기 계산은 클라이언트 취소만으로 즉시 중단됨을 보장하지 않으며 장애 경로에서 추가 검증한다.
+
+## 리뷰 후 갱신
+
+PR #1의 필수 6건·개선 4건 수정과 회귀 테스트 결과는 [리뷰 수정 기록](pr1-review.md)에 별도로 남겼다. 위 측정·테스트 수는 최초 구현 시점 기록이며 리뷰 수정 후 백엔드 테스트는 23개다.

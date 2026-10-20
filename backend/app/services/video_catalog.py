@@ -1,6 +1,7 @@
 """Manifest-only file access: users cannot submit arbitrary file paths."""
 
 import json
+import os
 from pathlib import Path
 from backend.app.schemas import Video
 from backend.app.retrieval.srt_parser import parse_srt
@@ -8,9 +9,15 @@ from backend.app.retrieval.srt_parser import parse_srt
 ROOT = Path(__file__).resolve().parents[3]
 
 
+def resolve_manifest(manifest: Path | str | None = None) -> Path:
+    """Resolve API and subprocess manifest paths against the same project root."""
+    path = Path(manifest or os.getenv("WISH_MANIFEST") or "data/manifest.local.json")
+    return (path if path.is_absolute() else ROOT / path).resolve()
+
+
 def load_videos(manifest: Path | None = None) -> list[Video]:
     """Read only registered metadata; does not load transcripts or models."""
-    path = manifest or ROOT / "data/manifest.local.json"
+    path = resolve_manifest(manifest)
     return [Video.model_validate(row) for row in json.loads(path.read_text())]
 
 

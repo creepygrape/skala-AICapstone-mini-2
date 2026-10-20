@@ -43,6 +43,8 @@ class LocalEncoder:
 class Retriever:
     def __init__(self, catalog, encoder=None, cache_dir: Path | None = None):
         self.catalog = catalog
+        self.cue_maps = {video_id: {c.cue_id: c for c in cues}
+                         for video_id, cues in catalog.cues.items()}
         self.chunks = make_chunks([c for group in catalog.cues.values() for c in group])
         self.tokenized = [tokens(c.text_for_retrieval) or [""] for c in self.chunks]
         self.keyword = BM25Plus(self.tokenized)
@@ -93,16 +95,22 @@ class Retriever:
                    (set(old.chunk.cue_ids) & set(chunk.cue_ids) or
                     abs(old.chunk.start_seconds-chunk.start_seconds)<10) for old in result):
                 continue
-            result.append(Candidate(chunk=chunk, score=fused[i]))
+            candidate = Candidate(chunk=chunk, score=fused[i])
+            # Reuse this request's vector. Keyword mode never invokes dense.
+            candidate.selected_cue_id = self.select_cue(
+                query, candidate, query_vector=vector if mode != "keyword" else None,
+                use_dense=mode != "keyword"
+            ).cue_id
+            result.append(candidate)
             if len(result) >= top_k:
                 break
         return SearchReply(candidates=result, mode=mode)
 
-    def select_cue(self, query, candidate):
+    def select_cue(self, query, candidate, query_vector=None, use_dense=True):
         chunk = candidate.chunk
-        cue_map = {c.cue_id:c for c in self.catalog.cues[chunk.video_id]}
+        cue_map = self.cue_maps[chunk.video_id]
         cues = [cue_map[i] for i in chunk.cue_ids]
-        if not self.encoder:
+        if not self.encoder or not use_dense:
             query_tokens = set(tokens(query))
             return max(cues, key=lambda c: len(query_tokens & set(tokens(c.original_text))))
         missing = [c for c in cues if (c.video_id,c.cue_id) not in self.cue_vectors]
@@ -110,5 +118,5 @@ class Retriever:
             encoded = self.encoder.encode([c.original_text for c in missing])
             for c,vector in zip(missing,encoded):
                 self.cue_vectors[c.video_id,c.cue_id] = vector
-        q = self.encoder.encode([query])[0]
+        q = query_vector if query_vector is not None else self.encoder.encode([query])[0]
         return max(cues,key=lambda c:float(self.cue_vectors[c.video_id,c.cue_id] @ q))

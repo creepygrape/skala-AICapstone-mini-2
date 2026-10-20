@@ -40,3 +40,63 @@ def test_evidence_rejects_missing_or_cross_video_cues():
     context.video_id='SYNTHETIC02'
     with pytest.raises(ValueError,match='video mismatch'):
         verify_candidate(candidate,context,metadata)
+
+
+@pytest.mark.parametrize('all_rejected',[False,True])
+def test_candidate_rejection_is_not_a_tool_failure(monkeypatch,all_rejected):
+    import backend.app.main as module
+    original=module.call
+
+    async def inject(session,name,arguments,schema):
+        reply=await original(session,name,arguments,schema)
+        if name=='search_transcripts':
+            bad=reply.candidates[0].model_copy(deep=True)
+            bad.selected_cue_id='outside-candidate'
+            reply.candidates=[bad] if all_rejected else [bad,reply.candidates[0]]
+        return reply
+
+    monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
+    monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
+    monkeypatch.setattr(module,'call',inject)
+    with TestClient(app) as client:
+        result=client.post('/api/search',json={'query':'RIKU'})
+        assert result.status_code==200,result.text
+        body=result.json()
+        assert 'evidence_rejected' in body['warnings']
+        assert body['status']==('unsupported' if all_rejected else 'partial')
+        assert len(body['results'])==(0 if all_rejected else 1)
+
+
+def test_metadata_is_cached_and_tool_errors_stay_503(monkeypatch):
+    import backend.app.main as module
+    original=module.call
+    metadata_calls=[]
+    fail_search=False
+
+    async def track(session,name,arguments,schema):
+        if name=='get_video_metadata': metadata_calls.append(arguments['video_id'])
+        if name=='search_transcripts' and fail_search: raise RuntimeError('injected MCP failure')
+        return await original(session,name,arguments,schema)
+
+    monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
+    monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
+    monkeypatch.setattr(module,'call',track)
+    with TestClient(app) as client:
+        assert metadata_calls==['SYNTHETIC01']
+        assert client.get('/api/videos').status_code==200
+        assert client.get('/api/videos').status_code==200
+        assert client.post('/api/search',json={'query':'RIKU'}).status_code==200
+        assert metadata_calls==['SYNTHETIC01']
+        fail_search=True
+        response=client.post('/api/search',json={'query':'RIKU'})
+        assert response.status_code==503
+        assert response.json()['detail']['request_id']
+        assert not app.state.busy
+
+
+def test_url_builder_validates_id_and_time():
+    from backend.app.services.urls import video_url
+    assert video_url('1HJgbE66GI4')=='https://www.youtube.com/watch?v=1HJgbE66GI4'
+    assert video_url('1HJgbE66GI4',189.606).endswith('&t=189s')
+    for video_id,start in [('bad-id',1),('1HJgbE66GI4',-1),('1HJgbE66GI4',float('nan'))]:
+        with pytest.raises(ValueError): video_url(video_id,start)

@@ -2,6 +2,7 @@
 
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from backend.app.services.urls import video_url
 
 
 class Cue(BaseModel):
@@ -37,7 +38,7 @@ class Video(BaseModel):
 
     @property
     def url(self):
-        return f"https://www.youtube.com/watch?v={self.video_id}"
+        return video_url(self.video_id)
 
 
 class Candidate(BaseModel):

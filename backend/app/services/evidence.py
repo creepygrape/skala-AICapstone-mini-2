@@ -1,7 +1,7 @@
 """Deterministic evidence construction. No LLM-created quote, time or speaker."""
 
-import math
 from backend.app.schemas import Candidate, ContextReply, MetadataReply, SceneResult
+from backend.app.services.urls import video_url
 
 
 def verify_candidate(candidate: Candidate, context: ContextReply, video: MetadataReply) -> SceneResult:
@@ -20,6 +20,6 @@ def verify_candidate(candidate: Candidate, context: ContextReply, video: Metadat
         raise ValueError("Invalid source quote or unsupported speaker")
     return SceneResult(video_id=cue.video_id,title=video.title,cue_ids=[cue.cue_id],
                        start_seconds=cue.start_seconds,end_seconds=cue.end_seconds,
-                       url=f"https://www.youtube.com/watch?v={cue.video_id}&t={math.floor(cue.start_seconds)}s",
+                       url=video_url(cue.video_id, cue.start_seconds),
                        evidence_text=cue.original_text,evidence_type=cue.caption_type,
                        explanation_ko="검색된 원문 자막 구간입니다. 질문과의 의미 일치는 아직 검증하지 않았습니다.")

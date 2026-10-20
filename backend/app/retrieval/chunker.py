@@ -23,10 +23,16 @@ def make_chunks(cues: list[Cue], window: int = 20, stride: int = 10) -> list[Chu
             continue
         seen.add((video_id, ids))
         texts = []
-        for cue in items:
+        for index, cue in enumerate(items):
             text = cue.original_text
-            if texts and text.startswith(items[len(texts)-1].original_text):
-                text = text[len(items[len(texts)-1].original_text):].lstrip()
+            if index:
+                previous = items[index-1].original_text
+                if text.startswith(previous):
+                    suffix = text[len(previous):]
+                    # Whitespace or an exact repetition is safe. Punctuation
+                    # alone is not: "we" + "we're" must preserve the word.
+                    if not suffix or suffix[0].isspace():
+                        text = suffix.lstrip()
             texts.append(text)
         result.append(Chunk(chunk_id=f"{video_id}:{key}", video_id=video_id, cue_ids=ids,
                             start_seconds=min(c.start_seconds for c in items),

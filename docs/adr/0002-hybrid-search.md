@@ -27,3 +27,7 @@ Baseline A=BM25, B=Hybrid, C=Hybrid+Agent를 같은 corpus/평가셋에서 비�
 ## Day 1 검색 상세 결정
 BM25는 rank-bm25의 BM25Plus를 사용한다. 소규모 합성 corpus에서는 Okapi의 IDF가 0이 되어 실제 일치도 누락되는 사례가 있어 이를 회귀 테스트로 확인했다. BM25Plus의 비일치 기본 점수 때문에 실제 토큰 교집합이 있는 후보만 keyword 순위에 포함한다. Dense는 정규화 벡터의 내적, 융합은 RRF k=60, 각 검색의 후보 상한은 20이다.
 검색 인덱스는 NumPy 파일로 로컬 data/index에 저장하며 corpus·청킹 텍스트·모델 로컬 경로의 해시로 무효화한다. Chroma를 추가하는 대신 설치 복잡도를 줄이며 대규모 검색 확장은 추후 검토한다.
+
+## PR #1 리뷰 반영 — 질의 임베딩 재사용
+
+검색 라운드당 질의 벡터를 한 번 계산하고 후보 cue 선택에 재사용한다. 영상별 cue ID 맵은 Retriever 초기화 시 한 번 만든다. keyword 모드의 cue 선택은 어휘 일치만 사용하며, 임베딩 모델이 로드돼 있어도 질의 임베딩을 호출하지 않는다. 계수형 합성 encoder 테스트로 hybrid 질의 encode 1회와 keyword encode 0회를 확인한다.
