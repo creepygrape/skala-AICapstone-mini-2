@@ -1,0 +1,25 @@
+# Third-party full transcripts: do NOT publish to GitHub
+/data/raw/
+/data/index/
+/data/chroma/
+/data/cache/
+/data/processed/
+/data/manifest.local.json
+/eval/private/
+/logs/
+*.srt
+*.vtt
+# Allow explicit synthetic/test fixture samples if reviewed first
+!/data/fixtures/*.srt
+!/data/fixtures/*.vtt
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+dist/
+.DS_Store
+*.sqlite3
+*.db
