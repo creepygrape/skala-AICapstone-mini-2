@@ -22,6 +22,7 @@ from backend.app.agent.model import build_model
 from backend.app.profile import load_profile
 from backend.app.agent.telemetry import TelemetryPublisher
 from backend.app.mcp.client import connect
+from backend.app.retrieval.chunker import chunk_settings
 from backend.app.schemas import MetadataReply, SearchResponse
 from backend.app.services.search import SearchFailure, call_tool, search_and_verify
 from backend.app.services.video_catalog import Catalog, ROOT, resolve_manifest
@@ -160,6 +161,7 @@ async def run(args):
             'C router_en':'Agent Router (LLM) writes the English first query, then bounded replans; A/B router_en reuse that exact first query',
             'C-ko control':'real Agent, real Router intent, but first query replaced by the raw Korean text A/B raw_ko use; replans still LLM-written',
             'comparability':'A/B raw_ko vs C differ in preprocessing; use router_en and C-ko rows for like-for-like starting queries'},
+        'chunking':dict(zip(('window_seconds','stride_seconds'),chunk_settings())),
         'gold_approval':approval, 'agent_model':None, 'llm_usage':None, 'langsmith_project':None, 'max_llm_calls':max_llm_calls,
         'metric_policy':'Same video and floor(link time) in accepted interval ±10s',
         'semantic_verification':use_agent, 'systems_not_measured':[x for x in 'ABC' if x not in systems], 'mcp_startup_seconds':None,

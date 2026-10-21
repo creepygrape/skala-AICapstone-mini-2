@@ -10,6 +10,7 @@ from pydantic import Field
 from backend.app.schemas import ContextReply, MetadataReply, NeighborsReply, SearchReply
 from backend.app.profile import load_profile
 from backend.app.services.video_catalog import Catalog, ROOT
+from backend.app.retrieval.chunker import chunk_settings
 from backend.app.retrieval.hybrid import LocalEncoder, Retriever
 from backend.app.mcp.search_gate import SearchGate
 
@@ -21,7 +22,8 @@ search_gate = SearchGate()
 def resources():
     catalog = Catalog(profile=load_profile())
     encoder = None if os.getenv("WISH_KEYWORD_ONLY") == "1" else LocalEncoder(os.getenv("WISH_EMBEDDING_PATH"))
-    return catalog, Retriever(catalog, encoder, ROOT / "data/index")
+    window, stride = chunk_settings()
+    return catalog, Retriever(catalog, encoder, ROOT / "data/index", chunk_window=window, chunk_stride=stride)
 
 
 @server.tool(structured_output=True)
