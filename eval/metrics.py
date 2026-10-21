@@ -103,6 +103,11 @@ def summarize(records, tasks):
             'unsupported_speaker_assertions':sum((r['agent_metrics']['speaker_assertions'] if is_agent
                                                   else r['answerability_metrics']['unsupported_speaker_assertions']) for r in group),
             'scene_misrouted':sum(bool(r['agent_metrics']['scene_misrouted']) for r in group) if is_agent else None,
+            'fallback_questions':sum(bool(r.get('fallback')) for r in group) if is_agent else None,
+            'raw_retrieval_success_at_1_count':(sum(bool(r['retrieval_metrics']['scene_success_at_1'])
+                for r in group if r.get('retrieval_metrics')) if is_agent else None),
+            'raw_retrieval_hit_at_3_count':(sum(bool(r['retrieval_metrics']['hit_at_3'])
+                for r in group if r.get('retrieval_metrics')) if is_agent else None),
             'mean_seconds':round(mean(r['latency_seconds'] for r in group),4) if group else None,
             'max_seconds':round(max(r['latency_seconds'] for r in group),4) if group else None,
             'mean_tool_calls':round(mean(r.get('tool_calls',0) for r in group),3) if group else None,

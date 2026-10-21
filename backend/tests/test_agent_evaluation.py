@@ -5,10 +5,11 @@ import json
 
 import pytest
 
+from backend.app.services.search import SearchFailure
 from backend.app.services.video_catalog import ROOT
 from eval.agent_runner import RouteProbe, evaluate_agent_question
 from eval.dataset import load_questions
-from eval.metrics import agent_metrics, summarize
+from eval.metrics import agent_metrics, scene_metrics, summarize
 from eval.run_eval import verify_gold_approval
 from backend.tests.test_agent import ScriptedModel, make_agent
 
@@ -102,3 +103,93 @@ def test_gold_approval_hash_is_enforced(tmp_path, monkeypatch):
     gold.write_text(json.dumps(row).replace('RIKU', 'X')+'\n')
     with pytest.raises(ValueError, match='changed after human approval'):
         verify_gold_approval(gold, load_questions(gold))
+
+
+class FailingModel(ScriptedModel):
+    """ScriptedModel that fails at a chosen stage."""
+    def __init__(self, fail, **kwargs):
+        super().__init__(**kwargs)
+        self.fail = fail
+
+    async def route(self, query):
+        if self.fail == 'route':
+            raise SearchFailure('model_unavailable')
+        return await super().route(query)
+
+    async def verify(self, query, evidence):
+        if self.fail == 'verify':
+            raise SearchFailure('model_timeout')
+        return await super().verify(query, evidence)
+
+    async def rewrite(self, query, previous, feedback):
+        if self.fail == 'rewrite':
+            raise SearchFailure('model_timeout')
+        return await super().rewrite(query, previous, feedback)
+
+
+def run_with(tmp_path, model, q):
+    agent, _ = make_agent(tmp_path, RouteProbe(model))
+    return asyncio.run(evaluate_agent_question(agent, agent.model, q, condition='c', system='C'))
+
+
+def test_ambiguous_is_not_scene_or_speaker_success(tmp_path):
+    q = question('speaker_unknown')
+    record = run_with(tmp_path, ScriptedModel(('uncertain',), intent='speaker_query'), q)
+    assert record['status'] == 'ambiguous'
+    assert record['retrieval_metrics']['scene_success_at_1'] is True  # raw candidate hit kept apart
+    assert record['metrics'] == {'scene_success_at_1':False, 'hit_at_3':False}
+    assert record['agent_metrics']['speaker_unknown_correct'] is False
+    s = summarize([record], [{'condition':'c','system':'C','question':q}])[0]
+    assert s['success_at_1_count'] == 0 and s['raw_retrieval_success_at_1_count'] == 1
+
+
+def test_partial_after_verifier_error_is_not_success_and_keeps_cause(tmp_path):
+    q = question()
+    record = run_with(tmp_path, FailingModel('verify'), q)
+    assert record['status'] == 'partial' and record['error'] is None
+    assert record['fallback'] is True and record['telemetry_error'] == 'model_timeout'
+    assert record['metrics']['scene_success_at_1'] is False
+    assert record['retrieval_metrics']['scene_success_at_1'] is True
+    assert record['llm_calls'] == 2 and not record['llm_calls_mismatch']
+    s = summarize([record], [{'condition':'c','system':'C','question':q}])[0]
+    assert s['fallback_questions'] == 1 and s['success_at_1_count'] == 0
+
+
+def test_router_failure_keeps_llm_call_count(tmp_path):
+    record = run_with(tmp_path, FailingModel('route'), question())
+    assert record['status'] == 'error' and record['error']['code'] == 'model_unavailable'
+    assert record['llm_calls'] == 1 and record['fallback'] is False
+
+
+def test_rewrite_error_after_uncertain_is_ambiguous_fallback(tmp_path):
+    q = question()
+    record = run_with(tmp_path, FailingModel('rewrite', verdicts=('irrelevant',)), q)
+    # Nothing uncertain was kept, so a failed rewrite is a request error with its cost preserved.
+    assert record['status'] == 'error' and record['llm_calls'] == 3
+    class UncertainThenFail(FailingModel):
+        async def verify(self, query, evidence):
+            return await ScriptedModel.verify(self, query, evidence)
+    model = UncertainThenFail('rewrite', verdicts=('uncertain',))
+    record = run_with(tmp_path, model, q)
+    assert record['status'] == 'ambiguous' and record['telemetry_error'] == 'model_timeout'
+    assert record['metrics']['scene_success_at_1'] is False and record['llm_calls'] == 3
+
+
+def test_ab_partial_still_counts_as_search_candidate():
+    from types import SimpleNamespace
+    q = question()
+    hit = SimpleNamespace(video_id=q.expected_video_id, start_seconds=q.accepted_intervals[0][0])
+    assert scene_metrics(q, [hit])['scene_success_at_1'] is True
+
+
+def test_aggregate_counts_only_found_for_c_and_flags_confident_wrong():
+    from eval.aggregate import aggregate
+    hit = {'scene_success_at_1':True, 'hit_at_3':True}
+    miss = {'scene_success_at_1':False, 'hit_at_3':False}
+    def rec(system, status, m, **kw):
+        return {'condition':'c', 'system':system, 'status':status, 'metrics':m, **kw}
+    rows = aggregate([rec('C', 'found', hit), rec('C', 'ambiguous', hit), rec('C', 'found', miss),
+                      rec('C', 'unsupported', None), rec('B', 'partial', hit)])
+    c, b = rows[('c', 'C')], rows[('c', 'B')]
+    assert (c['success_at_1'], c['raw_success_at_1'], c['confident_wrong'], c['scene_questions']) == (1, 2, 1, 3)
+    assert b['success_at_1'] == 1  # A/B partial results remain search hits

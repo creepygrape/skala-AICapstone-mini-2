@@ -51,7 +51,7 @@ API와 평가는 `backend/app/services/search.py`를 함께 호출한다. 한국
 
 화자 정답은 Router의 `speaker_query` 분류, 관련 장면의 Scene Success@1 성공, 사용자에게 자막만으로 화자를 확인할 수 없다는 안내 제공을 모두 만족해야 한다. 오류·무응답·장면 누락은 실패다. 세 조건을 따로 기록하며 speaker=null만으로 정답 처리하지 않는다.
 
-근거 없는 화자 단정은 `speaker` 필드와 사용자에게 보이는 `explanation_ko` 등 설명문을 모두 대상으로 한다. 설명문의 발화자 주장을 사람 검토로 판정하고 인용·호명 대상·편집 설명과 구별해 근거 및 필드/설명별 건수를 남긴다. 단정이 있으면 화자 정답에서도 제외한다. 판정 코드는 `metrics.agent_metrics`이며 사용자에게 보이는 설명문은 고정 문구 4종이라 전수 점검했다.
+근거 없는 화자 단정은 `speaker` 필드와 사용자에게 보이는 `explanation_ko` 등 설명문을 모두 대상으로 한다. 설명문의 발화자 주장을 사람 검토로 판정하고 인용·호명 대상·편집 설명과 구별해 근거 및 필드/설명별 건수를 남긴다. 단정이 있으면 화자 정답에서도 제외한다. C의 장면·화자 성공은 `status=found`일 때만 인정하고 `partial`·`ambiguous`의 원시 후보 적중은 `retrieval_metrics`로 따로 기록한다(A/B 규칙은 그대로). 오류 시 LLM 호출 수는 모델 래퍼가 센 값을, 정상 반환 fallback의 원인은 `telemetry_error`를 보존한다. `python -m eval.aggregate --input eval/private/<결과>.json`으로 보고서 수치를 재집계한다. 판정 코드는 `metrics.agent_metrics`이며 사용자에게 보이는 설명문은 고정 문구 4종이라 전수 점검했다.
 
 실측 요약은 [Day 1 마무리 보고서](../docs/reports/day1-completion.md)에 기록한다. 같은 실제 corpus를 재현하려면 공개하지 않은 자막을 별도로 확보해야 한다.
 
