@@ -84,7 +84,9 @@ class JsonLLM:
     def __init__(self, fast_model, quality_model=None):
         self.model = fast_model
         self.quality_model = quality_model or fast_model
-        self.usage = {'calls': 0, 'tokens_in': 0, 'tokens_out': 0}
+        # attempts counts every request sent (including timeouts/HTTP errors that may still be
+        # billed); calls/tokens count only responses that reported usage. Billing guards use attempts.
+        self.usage = {'attempts': 0, 'calls': 0, 'tokens_in': 0, 'tokens_out': 0}
 
     @property
     def name(self):
@@ -107,6 +109,7 @@ class JsonLLM:
     async def ask(self, task, payload, schema, role='fast'):
         """Traced entry point. Inert unless the agent opted in to LangSmith (tracing_context)."""
         model = self.model_for(role)
+        self.usage['attempts'] += 1  # before sending: a timeout may still have been billed
         async with trace(name=f'{self.backend}.{schema.__name__}', run_type='llm',
                          inputs={'messages': self.messages(task, payload)},
                          metadata={'ls_provider': self.backend, 'ls_model_name': model,

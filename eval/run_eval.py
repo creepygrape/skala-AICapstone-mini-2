@@ -96,7 +96,10 @@ MAX_LLM_CALLS_PER_QUESTION = 6  # route + 3 verify + 2 rewrite: the worst case o
 
 
 def llm_budget_exhausted(calls_so_far, cap):
-    """True when one more Agent question could exceed the cap (cap=None: unlimited)."""
+    """True when one more Agent question could exceed the cap (cap=None: unlimited).
+
+    Pass the number of requests *sent* (usage['attempts']), not successful responses: a
+    timed-out request may still be billed."""
     return cap is not None and calls_so_far + MAX_LLM_CALLS_PER_QUESTION > cap
 
 
@@ -203,7 +206,7 @@ async def run(args):
             router_queries = {}
             for task in tasks:
                 if task['kind']=='agent':
-                    if llm_budget_exhausted(getattr(model,'usage',{}).get('calls',0), max_llm_calls):
+                    if llm_budget_exhausted(getattr(model,'usage',{}).get('attempts',0), max_llm_calls):
                         output['run_error'] = 'llm_budget_reached'  # stop before spending more
                         break
                     record = await evaluate_agent_question(agent,probe,task['question'],condition=task['condition'],

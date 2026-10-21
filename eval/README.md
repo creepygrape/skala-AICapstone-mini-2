@@ -18,7 +18,7 @@ A=BM25Plus/B=Hybrid/C=Hybrid+Agent(실제 `FinderAgent`)를 같은 corpus·질�
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m eval.run_eval --dataset eval/private/dev.jsonl --rewrites eval/private/dev.rewrites.json --output eval/private/day1-baselines.review2.json
 ```
 
-LLM 백엔드는 `WISH_LLM_BACKEND`(ollama 기본 | openai)를 따른다. 결과의 `agent_model`에 백엔드와 모델명이, `llm_usage`와 각 C 레코드의 `llm_tokens_in/out`에 토큰이 기록된다. **OpenAI는 과금되므로 `--max-llm-calls N`으로 상한을 둔다**(한 질문의 최악 6회를 넘길 수 있으면 다음 질문을 시작하지 않고 `run_error=llm_budget_reached`로 부분 결과를 저장). OpenAI 실행 예:
+LLM 백엔드는 `WISH_LLM_BACKEND`(ollama 기본 | openai)를 따른다. 결과의 `agent_model`에 백엔드와 모델명이, `llm_usage`와 각 C 레코드의 `llm_tokens_in/out`에 토큰이 기록된다. **OpenAI는 과금되므로 `--max-llm-calls N`으로 상한을 둔다**(전송한 요청 수 `usage.attempts` 기준이며 timeout·HTTP 오류도 센다. 한 질문의 최악 6회를 넘길 수 있으면 다음 질문을 시작하지 않고 `run_error=llm_budget_reached`로 부분 결과를 저장). `llm_usage`의 `calls`·토큰은 사용량이 보고된 성공 응답만 센다. OpenAI 실행 예:
 
 ```sh
 set -a; source .env; set +a   # OPENAI_API_KEY 등 (이 스크립트는 .env를 직접 읽지 않는다)

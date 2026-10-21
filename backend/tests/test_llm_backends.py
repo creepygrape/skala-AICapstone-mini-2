@@ -72,7 +72,7 @@ def test_openai_uses_fast_and_quality_models_with_strict_schema_and_counts_token
     fmt = sent[1]['response_format']
     assert fmt['type'] == 'json_schema' and fmt['json_schema']['strict'] is True
     assert sent[0]['temperature'] == 0 and sent[0]['messages'][0]['role'] == 'system'
-    assert usage == {'calls': 3, 'tokens_in': 33, 'tokens_out': 21}
+    assert usage == {'attempts': 3, 'calls': 3, 'tokens_in': 33, 'tokens_out': 21}
 
 
 def test_strict_schema_keeps_shape_but_drops_unsupported_keywords():
@@ -150,7 +150,7 @@ def test_ollama_routes_roles_to_models_and_counts_tokens():
             await model.close()
     usage = asyncio.run(run())
     assert sent == ['fast-local', 'quality-local']
-    assert usage == {'calls': 2, 'tokens_in': 10, 'tokens_out': 4}
+    assert usage == {'attempts': 2, 'calls': 2, 'tokens_in': 10, 'tokens_out': 4}
 
 
 class _CapturingSession:
@@ -276,3 +276,32 @@ def test_route_keeps_the_user_question_as_placeholder_when_blank_and_not_searchi
             await model.close()
     decision = asyncio.run(run())
     assert decision.intent == 'unsupported' and decision.search_query == '리쿠가 입은 옷 색깔은 뭐야?'
+
+
+@pytest.mark.parametrize('failure', ['timeout', 'http_500', 'bad_json'])
+def test_billing_guard_counts_attempts_even_when_no_usage_is_reported(failure):
+    """A timed-out or failed request may still be billed, so the cap must count it."""
+    from eval.run_eval import llm_budget_exhausted
+    def handle(request):
+        if failure == 'timeout':
+            raise httpx.ReadTimeout('timeout', request=request)
+        if failure == 'http_500':
+            return httpx.Response(500, json={})
+        return httpx.Response(200, json={'choices': [{'message': {'content': 'not json'}}]})
+    async def run():
+        model = await openai_with(handle)
+        try:
+            for _ in range(6):
+                with pytest.raises(SearchFailure):
+                    await model.route('장면')
+            return dict(model.usage)
+        finally:
+            await model.close()
+    usage = asyncio.run(run())
+    assert usage['attempts'] == 6
+    assert usage['tokens_in'] == 0                               # nothing reported usage
+    if failure != 'bad_json':                                    # no response body: no success counted
+        assert usage['calls'] == 0
+        # With only successes counted the guard would still allow another question (0 + 6 <= 6).
+        assert llm_budget_exhausted(usage['calls'], 6) is False
+    assert llm_budget_exhausted(usage['attempts'], 6) is True    # attempts stop the run
