@@ -114,6 +114,8 @@ def summarize(records, tasks):
             'mean_llm_calls':round(mean(r.get('llm_calls',0) for r in group),3) if group else None,
             'total_tool_calls':sum(r.get('tool_calls',0) for r in group),
             'total_llm_calls':sum(r.get('llm_calls',0) for r in group),
+            'total_llm_tokens_in':sum(r.get('llm_tokens_in',0) for r in group),
+            'total_llm_tokens_out':sum(r.get('llm_tokens_out',0) for r in group),
             'samples_per_question':1,
         })
     return summaries

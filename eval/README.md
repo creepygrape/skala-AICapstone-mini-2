@@ -18,6 +18,17 @@ A=BM25Plus/B=Hybrid/C=Hybrid+Agent(실제 `FinderAgent`)를 같은 corpus·질�
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m eval.run_eval --dataset eval/private/dev.jsonl --rewrites eval/private/dev.rewrites.json --output eval/private/day1-baselines.review2.json
 ```
 
+LLM 백엔드는 `WISH_LLM_BACKEND`(ollama 기본 | openai)를 따른다. 결과의 `agent_model`에 백엔드와 모델명이, `llm_usage`와 각 C 레코드의 `llm_tokens_in/out`에 토큰이 기록된다. **OpenAI는 과금되므로 `--max-llm-calls N`으로 상한을 둔다**(한 질문의 최악 6회를 넘길 수 있으면 다음 질문을 시작하지 않고 `run_error=llm_budget_reached`로 부분 결과를 저장). OpenAI 실행 예:
+
+```sh
+set -a; source .env; set +a   # OPENAI_API_KEY 등 (이 스크립트는 .env를 직접 읽지 않는다)
+WISH_LLM_BACKEND=openai WISH_AGENT_TRACE=eval/private/traces-openai HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+.venv/bin/python -m eval.run_eval --dataset eval/private/gold.jsonl --systems A,B,C --control \
+  --max-llm-calls 150 --output eval/private/day2-abc-gold-openai.json
+```
+
+**LangSmith에서 토큰·비용 보기**: `--langsmith`를 붙이면 C/C-ko 실행의 그래프 노드와 LLM 호출이 프로젝트 `wish-finder-eval`(웹 트래픽과 분리, `LANGSMITH_PROJECT`로 변경 가능)에 올라가 호출별 입출력 토큰을 볼 수 있다. `.env`에 `WISH_LANGSMITH_ENABLED=1`과 `LANGSMITH_API_KEY`가 있어야 하며, 없으면 조용히 건너뛰지 않고 실행을 거부한다. **질문과 후보 자막 원문이 업로드되므로** 개인 워크스페이스에서만 쓴다. 로컬 토큰 합계는 결과의 `llm_usage`와 `eval/private/agent-eval.jsonl`에도 남는다.
+
 추가 모델 다운로드 없이 기존 bge-m3 캐시를 사용한다. 영어 재구성은 실행 중 다시 생성하지 않고 저장된 문자열을 모든 방식에서 재사용한다. 질문 ID와 문항 수가 다르면 실행을 거부한다. 다른 manifest는 `--manifest`로 지정하고 프로젝트 루트 기준으로 해석한다.
 
 ## 라벨과 측정 규칙

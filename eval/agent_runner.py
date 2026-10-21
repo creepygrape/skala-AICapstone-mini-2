@@ -27,6 +27,13 @@ class RouteProbe:
 
     def arm(self, override=None):
         self.override, self.first_query, self.calls = override, None, 0
+        self.usage_start = dict(self.usage or {})
+
+    def tokens_used(self):
+        """Input/output tokens spent since arm(); 0 for models without usage counters."""
+        usage, start = self.usage or {}, getattr(self, 'usage_start', {})
+        return (usage.get('tokens_in', 0) - start.get('tokens_in', 0),
+                usage.get('tokens_out', 0) - start.get('tokens_out', 0))
 
     async def route(self, query):
         self.calls += 1  # Counted at call start so failed calls keep their cost.
@@ -76,6 +83,7 @@ async def evaluate_agent_question(agent, probe, question, *, condition, system, 
         'error':error, 'fallback':fallback, 'telemetry_error':telemetry.get('error'),
         'intent':intent, 'latency_seconds':round(time.monotonic()-start, 6),
         'tool_calls':telemetry.get('tool_calls') or 0, 'llm_calls':llm_calls or 0,
+        'llm_tokens_in':probe.tokens_used()[0], 'llm_tokens_out':probe.tokens_used()[1],
         'llm_calls_mismatch':llm_calls is not None and llm_calls != probe.calls,
         'search_rounds':response.search_attempts, 'metrics':scene, 'retrieval_metrics':retrieval,
         'answerability_metrics':answerability_metrics(question, response),

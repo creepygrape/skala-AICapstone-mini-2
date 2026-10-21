@@ -19,6 +19,7 @@ from pydantic import ValidationError
 
 from backend.app.agent.graph import FinderAgent
 from backend.app.agent.model import build_model
+from backend.app.agent.telemetry import TelemetryPublisher
 from backend.app.mcp.client import connect
 from backend.app.schemas import MetadataReply, SearchResponse
 from backend.app.services.search import SearchFailure, call_tool, search_and_verify
@@ -74,6 +75,31 @@ def verify_gold_approval(dataset, rows):
             'pending_excluded':approval.get('pending_ids',[])}
 
 
+async def start_langsmith(enabled):
+    """Optional LangSmith tracing for paid runs so token usage is visible there.
+
+    Explicit flag only; refuses to run silently untraced when it is not configured.
+    Uses a separate project so evaluation traces never mix with web traffic.
+    """
+    if not enabled:
+        return None
+    if os.getenv('WISH_LANGSMITH_ENABLED') != '1' or not os.getenv('LANGSMITH_API_KEY'):
+        raise ValueError('--langsmith needs WISH_LANGSMITH_ENABLED=1 and LANGSMITH_API_KEY')
+    os.environ.setdefault('LANGSMITH_PROJECT', 'wish-finder-eval')
+    telemetry = await TelemetryPublisher().start()
+    if not telemetry.enabled:
+        raise ValueError('LangSmith client could not start; check LANGSMITH_API_KEY and network')
+    return telemetry
+
+
+MAX_LLM_CALLS_PER_QUESTION = 6  # route + 3 verify + 2 rewrite: the worst case of one Agent run
+
+
+def llm_budget_exhausted(calls_so_far, cap):
+    """True when one more Agent question could exceed the cap (cap=None: unlimited)."""
+    return cap is not None and calls_so_far + MAX_LLM_CALLS_PER_QUESTION > cap
+
+
 async def run(args):
     dataset = project_path(args.dataset)
     rows = load_questions(dataset)
@@ -87,6 +113,7 @@ async def run(args):
     if control and 'C' not in systems:
         raise ValueError('--control needs system C')
     use_agent = 'C' in systems
+    max_llm_calls = getattr(args,'max_llm_calls',None)
     output_path = private_output(args.output)
     if output_path.exists():
         raise ValueError('Output already exists; choose a new path to preserve prior results')
@@ -129,7 +156,7 @@ async def run(args):
             'C router_en':'Agent Router (LLM) writes the English first query, then bounded replans; A/B router_en reuse that exact first query',
             'C-ko control':'real Agent, real Router intent, but first query replaced by the raw Korean text A/B raw_ko use; replans still LLM-written',
             'comparability':'A/B raw_ko vs C differ in preprocessing; use router_en and C-ko rows for like-for-like starting queries'},
-        'gold_approval':approval, 'agent_model':None,
+        'gold_approval':approval, 'agent_model':None, 'llm_usage':None, 'langsmith_project':None, 'max_llm_calls':max_llm_calls,
         'metric_policy':'Same video and floor(link time) in accepted interval ±10s',
         'semantic_verification':use_agent, 'systems_not_measured':[x for x in 'ABC' if x not in systems], 'mcp_startup_seconds':None,
         'video_timing':{v.video_id:'sampled' if v.timing_verified else 'unverified' for v in catalog.videos.values()},
@@ -152,6 +179,9 @@ async def run(args):
                WISH_MANIFEST=str(manifest),WISH_KEYWORD_ONLY='0')
     started = time.monotonic()
     model = None
+    # Configuration errors surface here, before any session or billing starts.
+    telemetry = await start_langsmith(getattr(args,'langsmith',False))
+    output['langsmith_project'] = os.getenv('LANGSMITH_PROJECT') if telemetry else None
     try:
         async with connect(env=env) as session:
             output['mcp_startup_seconds'] = round(time.monotonic()-started,3)
@@ -167,11 +197,15 @@ async def run(args):
                 probe = RouteProbe(model)
                 agent = FinderAgent(session,metadata,probe,mode='hybrid',
                                     log_path=private_output('eval/private/agent-eval.jsonl'),
+                                    telemetry=telemetry,
                                     trace_dir=private_output(os.environ['WISH_AGENT_TRACE'])
                                     if os.getenv('WISH_AGENT_TRACE') else None)
             router_queries = {}
             for task in tasks:
                 if task['kind']=='agent':
+                    if llm_budget_exhausted(getattr(model,'usage',{}).get('calls',0), max_llm_calls):
+                        output['run_error'] = 'llm_budget_reached'  # stop before spending more
+                        break
                     record = await evaluate_agent_question(agent,probe,task['question'],condition=task['condition'],
                                                            system=task['system'],override=task['override'])
                     if task['system']=='C' and record['router_first_query']:
@@ -183,6 +217,8 @@ async def run(args):
                     record = await evaluate_question(session,task['question'],query,task['mode'],metadata,
                                                       condition=task['condition'],system=task['system'])
                 output['records'].append(record)
+                if model is not None:
+                    output['llm_usage'] = dict(model.usage)
                 if record['error'] and record['error']['fatal']:
                     output['run_error'] = record['error']['code']
                 save()
@@ -198,6 +234,8 @@ async def run(args):
     finally:
         if model is not None:
             await model.close()
+        if telemetry is not None:
+            await telemetry.close()  # flushes queued traces
         save()
     print(json.dumps({'complete':output['complete'],'summary':output['summary'],
                       'mcp_startup_seconds':output['mcp_startup_seconds'],
@@ -212,6 +250,10 @@ def main():
     parser.add_argument('--manifest',type=Path)
     parser.add_argument('--systems',default='A,B',help='comma list from A,B,C')
     parser.add_argument('--control',action='store_true',help='add C-ko same-starting-query control')
+    parser.add_argument('--langsmith',action='store_true',
+                        help='trace every Agent run in LangSmith (project wish-finder-eval) to see token usage; uploads questions and subtitle excerpts')
+    parser.add_argument('--max-llm-calls',type=int,default=None,
+                        help='stop before an Agent question that could exceed this many LLM calls (billing guard)')
     parser.add_argument('--output',type=Path,default=Path('eval/private/day1-baselines.review2.json'))
     output = asyncio.run(run(parser.parse_args()))
     if not output['complete'] or any(r['status']=='error' for r in output['records']):
