@@ -14,6 +14,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 
 from backend.app.agent.graph import FinderAgent
 from backend.app.agent.model import build_model
+from backend.app.profile import load_profile
 from backend.app.mcp.client import connect
 from backend.app.schemas import MetadataReply
 from backend.app.services.search import SearchFailure, call_tool
@@ -25,7 +26,7 @@ async def main():
     output=private_output('eval/private/day2-agent-smoke.json')
     if output.exists():
         raise ValueError('Smoke output already exists; preserve previous measurements')
-    model=build_model()
+    model=build_model(profile=load_profile())
     records=[]
     try:
         await model.ready()

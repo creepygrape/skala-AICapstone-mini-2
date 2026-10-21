@@ -35,6 +35,7 @@ class FinderState(TypedDict, total=False):
     relevant: list[SceneResult]
     uncertain: list[SceneResult]
     verdicts: dict[str, str]
+    judged: dict[str, str]
     warnings: list[str]
     stop_replan: bool
     can_replan: bool
@@ -175,19 +176,25 @@ class FinderAgent:
                 warnings.append('replan_budget_exhausted')
             return {'verdicts':{},'relevant':[],'uncertain':state.get('uncertain',[]),
                     'can_replan':can_replan,'warnings':list(dict.fromkeys(warnings))}
-        evidence = []
-        for r in state['grounded']:
-            context = state['contexts'][evidence_key(r)]
-            evidence.append({'evidence_id':evidence_key(r),'quote':r.evidence_text,
-                'caption_type':r.evidence_type,
-                'context':[{'cue_id':c.cue_id,'text':c.original_text} for c in context.cues]})
-        decision = await self._llm(stats,'verify',state['user_query'],evidence)
-        expected = {evidence_key(r) for r in state['grounded']}
-        ids = [j.evidence_id for j in decision.judgments]
-        if len(ids)!=len(set(ids)) or set(ids)!=expected:
-            raise SearchFailure('model_invalid_evidence_ids')
-        verdicts = {j.evidence_id:j.verdict for j in decision.judgments}
-        stats.note('verification', verdicts=[
+        # Judge only candidates not seen in an earlier round: identical candidates carry no
+        # new information, so re-asking would only spend calls and can flip a verdict.
+        judged = dict(state.get('judged',{}))
+        new = [r for r in state['grounded'] if evidence_key(r) not in judged]
+        if new:
+            evidence = []
+            for r in new:
+                context = state['contexts'][evidence_key(r)]
+                evidence.append({'evidence_id':evidence_key(r),'quote':r.evidence_text,
+                    'caption_type':r.evidence_type,
+                    'context':[{'cue_id':c.cue_id,'text':c.original_text} for c in context.cues]})
+            decision = await self._llm(stats,'verify',state['user_query'],evidence)
+            expected = {evidence_key(r) for r in new}
+            ids = [j.evidence_id for j in decision.judgments]
+            if len(ids)!=len(set(ids)) or set(ids)!=expected:
+                raise SearchFailure('model_invalid_evidence_ids')
+            judged.update({j.evidence_id:j.verdict for j in decision.judgments})
+        verdicts = {evidence_key(r):judged[evidence_key(r)] for r in state['grounded']}
+        stats.note('verification', reused=len(state['grounded'])-len(new), verdicts=[
             {'evidence_id':evidence_key(r), 'start':r.start_seconds, 'quote':r.evidence_text,
              'verdict':verdicts[evidence_key(r)]} for r in state['grounded']])
         # A complete verdict set ends the unjudged-candidate lifecycle. Only a
@@ -202,12 +209,14 @@ class FinderAgent:
         relevant = [r for r in state['grounded'] if verdicts[evidence_key(r)]=='relevant']
         uncertain_results = list(uncertain.values())[:3]
         stats.best_uncertain = uncertain_results
-        can_replan = (not relevant and state['attempt'] < MAX_REPLAN_ROUNDS and
-                      state['deadline']-time.monotonic() >= self.min_replan_budget)
+        can_retry = not relevant and state['attempt'] < MAX_REPLAN_ROUNDS
+        budget_ok = state['deadline']-time.monotonic() >= self.min_replan_budget
+        # Nothing new to judge means another rewrite cannot change the outcome: stop.
+        can_replan = can_retry and bool(new) and budget_ok
         warnings = list(state['warnings'])
-        if not relevant and state['attempt'] < MAX_REPLAN_ROUNDS and not can_replan:
+        if can_retry and new and not budget_ok:
             warnings.append('replan_budget_exhausted')
-        return {'verdicts':verdicts,
+        return {'verdicts':verdicts,'judged':judged,
                 'relevant':relevant,'uncertain':uncertain_results,
                 'can_replan':can_replan,'warnings':list(dict.fromkeys(warnings))}
 
@@ -215,7 +224,10 @@ class FinderAgent:
         return 'replan' if state.get('can_replan') else 'finalize'
 
     async def _replan(self, state, stats):
-        query = await self._llm(stats,'rewrite',state['user_query'],state['queries'],state['verdicts'])
+        # Rejected wording is shown so the rewrite changes key nouns instead of paraphrasing.
+        feedback = [{'verdict':state['verdicts'].get(evidence_key(r),'unknown'),'quote':r.evidence_text[:120]}
+                    for r in state['grounded']]
+        query = await self._llm(stats,'rewrite',state['user_query'],state['queries'],feedback)
         query = SearchRequest(query=query).query
         stats.note('replan', previous=state['queries'], proposed=query)
         if state['deadline']-time.monotonic() < self.min_replan_budget:

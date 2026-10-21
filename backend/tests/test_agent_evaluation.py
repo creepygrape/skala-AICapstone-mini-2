@@ -11,7 +11,7 @@ from eval.agent_runner import RouteProbe, evaluate_agent_question
 from eval.dataset import load_questions
 from eval.metrics import agent_metrics, scene_metrics, summarize
 from eval.run_eval import verify_gold_approval
-from backend.tests.test_agent import ScriptedModel, make_agent
+from backend.tests.test_agent import NEW_CANDIDATE_QUERIES, ScriptedModel, make_agent
 
 
 def question(answerability='scene_supported'):
@@ -23,7 +23,7 @@ def question(answerability='scene_supported'):
 
 
 def run_c(tmp_path, q, intent='scene_search', override=None, verdicts=('relevant',)):
-    model = ScriptedModel(verdicts, intent=intent)
+    model = ScriptedModel(verdicts, intent=intent, rewrite_queries=NEW_CANDIDATE_QUERIES)
     agent, session = make_agent(tmp_path, RouteProbe(model))
     probe = agent.model
     record = asyncio.run(evaluate_agent_question(agent, probe, q, condition='c', system='C', override=override))

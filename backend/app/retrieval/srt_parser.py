@@ -6,11 +6,12 @@ from backend.app.schemas import Cue
 
 TIME = r"(\d{2,}):([0-5]\d):([0-5]\d),(\d{3})"
 STAMP = re.compile(rf"^{TIME} --> {TIME}$")
-MEMBERS = re.compile(r"\b(SION|RIKU|YUSHI|JAEHEE|RYO|SAKUYA)\b", re.I)
 
 
-def parse_srt(path: Path, video_id: str) -> list[Cue]:
+def parse_srt(path: Path, video_id: str, find_mentions=None) -> list[Cue]:
     """Read UTF-8/BOM SRT. Raise ValueError on malformed/duplicate/invalid cues.
+
+    find_mentions (e.g. Profile.mentions) fills mentioned_members; it is never a speaker.
 
     Overlap and repeated text are valid. Normalizes only file line endings.
     """
@@ -42,7 +43,7 @@ def parse_srt(path: Path, video_id: str) -> list[Cue]:
         kind = ("mixed" if remainder else "editorial") if editorial else "unknown"
         cues.append(Cue(video_id=video_id, cue_id=lines[0], start_seconds=start,
                         end_seconds=end, original_text=text,
-                        mentioned_members=tuple(sorted({m.upper() for m in MEMBERS.findall(text)})),
+                        mentioned_members=find_mentions(text) if find_mentions else (),
                         caption_type=kind))
         ids.add(lines[0])
     if not cues:

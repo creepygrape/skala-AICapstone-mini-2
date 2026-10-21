@@ -19,6 +19,7 @@ from pydantic import ValidationError
 
 from backend.app.agent.graph import FinderAgent
 from backend.app.agent.model import build_model
+from backend.app.profile import load_profile
 from backend.app.agent.telemetry import TelemetryPublisher
 from backend.app.mcp.client import connect
 from backend.app.schemas import MetadataReply, SearchResponse
@@ -194,7 +195,7 @@ async def run(args):
                                       for vid,v in metadata.items()}
             agent = probe = None
             if use_agent:
-                model = build_model()
+                model = build_model(profile=load_profile())
                 await model.ready()
                 output['agent_model'] = model.name
                 probe = RouteProbe(model)

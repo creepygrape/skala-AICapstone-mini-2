@@ -1,0 +1,15 @@
+{
+  "name": "NCT WISH video subtitles (first target collection)",
+  "subtitle_language": "English",
+  "speech_languages": ["Korean", "Japanese"],
+  "translated": true,
+  "entities": [
+    {"canonical": "SION", "aliases": ["시온", "シオン"]},
+    {"canonical": "RIKU", "aliases": ["리쿠", "リク"]},
+    {"canonical": "YUSHI", "aliases": ["유우시", "ユウシ"]},
+    {"canonical": "JAEHEE", "aliases": ["재희", "ジェヒ"]},
+    {"canonical": "RYO", "aliases": ["료", "リョウ"]},
+    {"canonical": "SAKUYA", "aliases": ["사쿠야", "サクヤ"]}
+  ],
+  "notes": "Members speak Korean and Japanese; subtitles do not say who is speaking."
+}

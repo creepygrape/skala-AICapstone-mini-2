@@ -69,7 +69,7 @@ async function submit() {
   <main>
     <header><a class="brand" href="/">WISH FINDER<span>기억 속 장면 찾기</span></a><span class="tag">{{ videoCount === null ? '로컬 자막 검색' : `등록 영상 ${videoCount}편` }}</span></header>
     <section class="intro">
-      <p class="eyebrow">NCT WISH SCENE FINDER</p>
+      <p class="eyebrow">SUBTITLE SCENE FINDER</p>
       <h1>그 장면, 뭐였더라?</h1>
       <p>정확한 대사나 제목을 몰라도 괜찮아요.<br />기억나는 상황으로 영상 속 장면을 찾아보세요.</p>
     </section>

@@ -1,6 +1,7 @@
 from pathlib import Path
 import pytest
 
+from backend.app.profile import load_profile
 from backend.app.retrieval.srt_parser import parse_srt
 from backend.app.retrieval.chunker import make_chunks
 from backend.app.services.video_catalog import Catalog, ROOT
@@ -8,7 +9,8 @@ from backend.app.schemas import Cue
 
 
 def test_fixture_preserves_mixed_caption_and_unknown_speakers():
-    cues = parse_srt(ROOT / "data/fixtures/synthetic.srt", "SYNTHETIC01")
+    profile = load_profile(ROOT / "data/profile.example.json")
+    cues = parse_srt(ROOT / "data/fixtures/synthetic.srt", "SYNTHETIC01", profile.mentions)
     assert cues[1].original_text == "(RIKU chose RIKU) Got myself"
     assert cues[1].caption_type == "mixed"
     assert cues[1].mentioned_members == ("RIKU",)
