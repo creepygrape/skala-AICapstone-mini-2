@@ -1,4 +1,4 @@
-# ADR-0006 — 결과 카드에서 YouTube iframe 임베드로 장면을 바로 확인한다
+# ADR-0007 — 결과 카드에서 YouTube iframe 임베드로 장면을 바로 확인한다
 
 ## 배경
 결과 카드가 YouTube 새 탭 링크만 제공해 시연 흐름이 끊겼다. 서버는 이미 `video_id`, `start_seconds`, `end_seconds`를 반환한다.

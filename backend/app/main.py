@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import logging
 import os
+from pathlib import Path
 import time
 from uuid import uuid4
 
@@ -12,13 +13,26 @@ from fastapi import FastAPI, HTTPException
 from backend.app.mcp.client import connect
 from backend.app.schemas import MetadataReply, SearchRequest, SearchResponse
 from backend.app.services.search import SearchFailure, call_tool as call, search_and_verify
-from backend.app.services.video_catalog import load_videos
+from backend.app.services.video_catalog import ROOT, load_videos
 from backend.app.agent.graph import FinderAgent
 from backend.app.agent.model import OllamaModel
 from backend.app.agent.telemetry import TelemetryPublisher
 from backend.app.sse import MESSAGES, ManagedStreamingResponse, StreamOwner, encode_event, public_error
 
 logger = logging.getLogger("wish_finder")
+
+
+def trace_dir(value):
+    """Traces contain subtitle text, so only Git-ignored private locations are allowed."""
+    if not value:
+        return None
+    target = Path(value) if Path(value).is_absolute() else ROOT/value
+    target = target.resolve()
+    allowed = [(ROOT/'eval/private').resolve(), (ROOT/'logs').resolve()]
+    if not any(target.is_relative_to(root) for root in allowed):
+        logger.warning('agent_trace_disabled reason=path_not_private')
+        return None
+    return target
 
 
 @asynccontextmanager
@@ -48,7 +62,8 @@ async def lifespan(app):
                 telemetry = await TelemetryPublisher().start()
                 app.state.agent = FinderAgent(session,app.state.videos,model,
                     mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid',
-                    tool_call=call,telemetry=telemetry)
+                    tool_call=call,telemetry=telemetry,
+                    trace_dir=trace_dir(os.getenv('WISH_AGENT_TRACE')))
             yield
         finally:
             tasks = list(app.state.search_tasks)

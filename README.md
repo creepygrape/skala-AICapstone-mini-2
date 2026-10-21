@@ -67,6 +67,8 @@ Vue는 `POST /api/search/stream`에 질문을 보내고 `routing/searching/valid
 
 `logs/agent.jsonl`에 request ID·분류·상태·단계별 시간·호출 수·오류를 기록하며 질문·원문을 넣지 않습니다. LangSmith는 `WISH_LANGSMITH_ENABLED=1`과 키가 모두 있을 때만 같은 요약 메타데이터를 전송합니다. 자동 Graph 원문 추적은 비활성화합니다. 키가 없어도 로컬 로그로 동작합니다. 자유 한국어 장면 요약은 현재 제공하지 않고 검증 상태와 화자 한계를 고정 문구로 표시합니다.
 
+진단: `WISH_AGENT_TRACE=eval/private/traces`를 켜면 요청별 라운드 추적(검색어·후보·판정·재작성)이 Git 제외 폴더(`eval/private/` 또는 `logs/`)에만 남고, `.venv/bin/python scripts/show_trace.py`로 읽기 쉽게 볼 수 있습니다. 자막 원문이 들어 있으니 공유하지 마세요.
+
 실제 로컬 Agent 시험은 `scripts/agent_smoke.py`로 실행합니다. 다른 Dense API를 먼저 종료해야 하며 결과는 Git 제외인 `eval/private/day2-agent-smoke.json`에 저장합니다. 기존 결과가 있으면 덮어쓰지 않습니다. gold를 사용하지 않는 데모 확인이며 C 전체 정량 평가는 아닙니다.
 
 공개 합성 fixture만 사용하는 keyword 모드는 다음과 같습니다. 이 모드는 다국어 Hybrid/Agent 품질 검증을 대체하지 않습니다.
