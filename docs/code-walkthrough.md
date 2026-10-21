@@ -99,6 +99,8 @@ flowchart LR
   - 프롬프트와 스키마는 `JsonLLM`에 한 벌만 있고, 백엔드 클래스는 HTTP 전송(`ask/ready/close`)만 구현한다.
   - 그래서 환경변수 하나로 바꿔도 그래프·MCP·테스트 코드는 그대로다.
 - **fast / quality**: `route`·`rewrite`는 fast 모델, `verify`는 quality 모델을 쓴다(OpenAI 기본 `gpt-4o-mini` / `gpt-4o`).
+- **대상 프로필**: 프롬프트는 대상 비종속 공통 지시문 + `profile.render()`(자막 언어, 번역 자막 안내, 이름 사전)로 만들어진다([ADR-0009](adr/0009-collection-profile-and-retrieval-judging-fixes.md), [roadmap](roadmap-and-design-notes.md)).
+- **재검색**: 이미 판정한 후보는 다시 묻지 않고(`judged`), 새 후보가 없으면 재검색을 멈춘다. 재작성에는 거절된 후보의 인용문을 보여 준다.
 - **OpenAI**: Structured Outputs(strict json_schema)를 쓰고 Pydantic으로 다시 검증한다. 과금되며, 질문과 후보 자막 일부만 전송한다.
 - **실행**: `scripts/run_backend.sh ollama|openai`. openai는 과금 y/N 확인을 받는다.
 - **비용 대리 지표**: 입·출력 토큰 수를 `logs/agent.jsonl`에 기록한다.
@@ -154,6 +156,7 @@ flowchart LR
 |---|---|
 | `backend/app/main.py`, `sse.py` | HTTP·SSE, lifespan 자원 관리, 오류 → 공개 메시지 변환 |
 | `backend/app/agent/` | 그래프(`graph.py`), LLM 공통 계약·Ollama·팩토리(`model.py`), OpenAI 백엔드(`openai_model.py`), 텔레메트리(`telemetry.py`) |
+| `backend/app/profile.py` | 대상 프로필(자막 언어, 번역 여부, 이름 사전)을 읽어 프롬프트와 이름 감지에 제공 |
 | `backend/app/mcp/` | MCP 서버, 클라이언트, 동시성 게이트 |
 | `backend/app/retrieval/` | SRT 파서, 청커, Hybrid 검색기 |
 | `backend/app/services/` | 도구 호출 래퍼, 근거 검증, 비-Agent 검색 경로(A/B 기준선), URL, 카탈로그 |
@@ -163,14 +166,15 @@ flowchart LR
 
 ### 테스트 (실측 개수)
 
-- **backend pytest 129개**
+- **backend pytest 142개**
 
   | 파일 | 개수 | 대상 |
   |---|---|---|
-  | `test_agent.py` | 36 | 그래프 경로, 상한, 폴백, `stage_ms`, 진단 trace |
-  | `test_llm_backends.py` | 16 | Ollama/OpenAI 교체 계약(모의 HTTP, 과금 없음), LangSmith 전송 내용(가짜 세션) |
+  | `test_agent.py` | 39 | 그래프 경로, 상한, 폴백, `stage_ms`, 진단 trace, 중복 재검색 제거 |
+  | `test_llm_backends.py` | 19 | Ollama/OpenAI 교체 계약(모의 HTTP, 과금 없음), LangSmith 전송 내용(가짜 세션) |
   | `test_agent_evaluation.py` | 16 | C 평가 경로 |
   | `test_sources.py` | 13 | SRT, 원문 경계 |
+  | `test_profile.py` | 7 | 대상 프로필(일반 기본값, 이름 사전, 경로 제한, 프롬프트 반영) |
   | `test_sse.py` | 12 | 이벤트 순서, 취소, 정리 |
   | `test_evaluation_safety.py` | 11 | gold 승인, 공개 범위 |
   | `test_search_service.py` | 9 | 도구 래퍼, 근거 검증 |

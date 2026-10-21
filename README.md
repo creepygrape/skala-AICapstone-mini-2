@@ -1,4 +1,4 @@
-# WISH FINDER — NCT WISH 장면 찾기 AI Agent
+# WISH FINDER — 자막 기반 영상 장면 찾기 AI Agent (첫 적용 대상: NCT WISH)
 
 > **현재 상태:** Day 1 검색 웹 + Day 2 Agent·POST SSE 구현. `WISH_AGENT_ENABLED=1`에서 LangGraph 의미 검증·조건부 최대 2회 재검색과 단계별 웹 진행 상태를 사용합니다.
 
