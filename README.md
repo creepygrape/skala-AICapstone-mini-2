@@ -1,6 +1,6 @@
 # WISH FINDER — NCT WISH 장면 찾기 AI Agent
 
-> **현재 상태:** Day 1 검색 웹 + Day 2 JSON Agent 구현. `WISH_AGENT_ENABLED=1`에서 LangGraph 의미 검증·조건부 최대 2회 재검색을 사용합니다. POST SSE와 웹 진행 상태는 다음 PR 작업입니다.
+> **현재 상태:** Day 1 검색 웹 + Day 2 Agent·POST SSE 구현. `WISH_AGENT_ENABLED=1`에서 LangGraph 의미 검증·조건부 최대 2회 재검색과 단계별 웹 진행 상태를 사용합니다.
 
 ## 문제와 목표
 
@@ -61,7 +61,7 @@ npm --prefix frontend run dev -- --port 5173
 WISH_AGENT_ENABLED=1 WISH_LLM_MODEL=qwen3:8b HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
 ```
 
-같은 `POST /api/search`에 `{"query":"리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면"}`을 보냅니다. `/ready`의 stage가 `agent_json`이면 Graph 경로입니다. Router → MCP 검색 → MCP 문맥/원문 검증 → 의미 판정 → 필요한 경우 재검색 → 응답으로 처리합니다. 화자 질문도 장면을 찾으며 화자 확인 불가를 고지합니다. 시각·인용·화자·한국어 설명은 모델 자유 생성으로 만들지 않습니다.
+Vue는 `POST /api/search/stream`에 질문을 보내고 `routing/searching/validating/replanning/result/error/done`을 표시합니다. `/ready`의 stage가 `agent_json`이면 Graph 경로입니다. 기존 `POST /api/search` JSON 응답도 평가와 회귀용으로 유지합니다. Router → MCP 검색 → MCP 문맥/원문 검증 → 의미 판정 → 필요한 경우 재검색 → 응답으로 처리합니다. 화자 질문도 장면을 찾으며 화자 확인 불가를 고지합니다. 시각·인용·화자·한국어 설명은 모델 자유 생성으로 만들지 않습니다.
 
 전체 요청 60초, MCP 도구 30초, LLM 호출 20초이며 검색은 최대 3라운드입니다. 모델 장애·잘못된 구조화 응답·MCP 장애는 503의 안전한 `detail.code`로 반환하고 미검증 결과를 내보내지 않습니다. 의미가 불확실한 후보는 `ambiguous`, 범위 밖/일반 대화는 `unsupported`입니다. 동일 검색어를 반복 생성하면 재검색을 조기 종료합니다.
 
@@ -93,7 +93,7 @@ npm --prefix frontend run build
 - 한국어 기본 검색은 료칸 질문에서 정답이 2위에 나오는 사례가 있습니다. [Day 1 기록](docs/reports/day1.md)에 실제 관측을 남깁니다.
 - 실제 로컬 manifest의 영상 제목은 공식 YouTube 메타데이터로 확인했습니다. 자막 출처는 사용자 Wave 도구 추출이며, 영상별 3개 시점의 내용 일치를 사용자에게 확인받았습니다. 전체 자막 시각 정확도나 제삼자 재배포 권한까지 확인한 것은 아닙니다.
 - 화자는 항상 미확인입니다. 모델이 화면·음성을 이해한 서비스가 아닙니다.
-- Agent JSON API와 최대 2회 재검색은 구현했습니다. POST SSE·Vue 진행 상태·연결 중단 처리는 다음 PR에서 마무리합니다.
+- Agent·POST SSE·Vue 진행 상태는 구현했습니다. 전체 C 정량 평가와 제출용 결과 보고서는 Day 3 범위입니다.
 
 ## PR #1 리뷰 수정
 

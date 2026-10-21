@@ -8,6 +8,7 @@ const error = ref('')
 const response = ref(null)
 const videoCount = ref(null)
 const timingSampled = ref(false)
+const progress = ref(null)
 let controller
 const examples = ['리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면', '료칸이 뭔지 물어본 부분', '료칸이 뭔지 물어본 멤버가 누구야?']
 
@@ -26,9 +27,13 @@ onUnmounted(() => controller?.abort())
 async function submit() {
   if (!query.value.trim() || busy.value) return
   controller = new AbortController()
-  busy.value = true; error.value = ''; response.value = null
+  busy.value = true; error.value = ''; response.value = null; progress.value = null
   const timeout = setTimeout(() => controller.abort(), 70000)
-  try { response.value = await searchScenes(query.value, controller.signal) }
+  try {
+    response.value = await searchScenes(query.value, controller.signal, (event, data) => {
+      if (['routing','searching','validating','replanning'].includes(event)) progress.value = { event, ...data }
+    })
+  }
   catch (e) { error.value = e.name === 'AbortError' ? '검색이 취소되었거나 시간이 초과됐습니다. 다시 시도해 주세요.' : e.message }
   finally { clearTimeout(timeout); busy.value = false }
 }
@@ -48,12 +53,14 @@ async function submit() {
       <div class="form-bottom"><span>확보한 자막과 영상 정보 안에서 검색합니다.</span><button type="submit" :disabled="busy || !query.trim()">{{ busy ? '찾는 중…' : '장면 찾기 ↗' }}</button></div>
     </form>
     <div class="examples"><span>이렇게 찾아보세요</span><button v-for="example in examples" :key="example" :disabled="busy" @click="query = example">{{ example }}</button></div>
-    <p v-if="busy" role="status" class="notice">관련 자막을 검색하고 원문과 시점을 확인하고 있어요. <button @click="controller?.abort()">취소</button></p>
+    <p v-if="busy" role="status" class="notice progress">{{ progress?.message || '검색을 준비하고 있어요.' }} <span v-if="progress?.attempt !== undefined && progress.event !== 'routing'">{{ progress.attempt + 1 }}차 검색</span><button @click="controller?.abort()">취소</button></p>
     <p v-if="error" role="alert" class="notice error">{{ error }}</p>
     <section v-if="response" aria-live="polite" class="results">
-      <h2>{{ response.results.length ? '기억과 가까운 검색 후보' : response.status === 'unsupported' ? '원문 근거를 확인하지 못했어요' : '관련 자막을 찾지 못했어요' }}</h2>
+      <h2>{{ response.results.length ? response.status === 'found' ? '기억과 일치하는 장면' : '확정하기 어려운 검색 후보' : response.status === 'unsupported' ? response.warnings.includes('evidence_rejected') ? '원문 근거를 확인하지 못했어요' : response.warnings.includes('subtitle_only_scope') ? '자막으로 확인할 수 없는 요청이에요' : '확인할 근거가 부족해요' : '관련 자막을 찾지 못했어요' }}</h2>
       <p v-if="!response.results.length">다른 표현이나 기억나는 단어로 다시 검색해 보세요. 영상에 장면이 없다는 뜻은 아닙니다.</p>
-      <p v-else class="notice">현재는 기본 검색 단계입니다. 원문과 시각은 확인했지만 질문과의 의미 일치는 아직 검증하지 않았어요. 자막만으로 발화자는 확인할 수 없습니다.</p>
+      <p v-else-if="response.status === 'partial'" class="notice">원문과 시각은 확인했지만 의미 검증을 완료하지 못했습니다.</p>
+      <p v-else-if="response.status === 'ambiguous'" class="notice">관련 가능성이 있지만 질문과 장면의 일치를 확정하기 어렵습니다.</p>
+      <p v-if="response.warnings.includes('speaker_unknown')" class="notice">자막에는 화자 정보가 없어 발화자는 확인할 수 없습니다.</p>
       <p v-if="response.warnings.includes('evidence_rejected')" class="notice">원문 근거를 확인하지 못한 후보는 제외했습니다.</p>
       <article v-for="item in response.results" :key="`${item.video_id}:${item.cue_ids.join(',')}`">
         <div class="card-top"><span class="tag">{{ item.evidence_type === 'mixed' ? '대사·편집 설명 혼합' : item.evidence_type === 'editorial' ? '편집 설명' : '원문 자막' }}</span><span>{{ timestamp(item.start_seconds) }} – {{ timestamp(item.end_seconds) }}</span></div>

@@ -410,3 +410,15 @@ def test_langsmith_start_failure_does_not_block_agent_api(monkeypatch,tmp_path):
         publisher=main.app.state.agent.telemetry
         assert not publisher.enabled and publisher.client is None and publisher.task is None
     assert model.closed and main.app.state.agent is None
+
+
+@pytest.mark.parametrize('same_query,budget', [(True,0),(False,10_000)])
+def test_stopped_replan_does_not_announce_another_attempt(tmp_path,same_query,budget):
+    agent,session=make_agent(tmp_path,ScriptedModel(('uncertain',),same_query=same_query),
+                             min_replan_budget=budget)
+    events=[]
+    async def progress(event,payload): events.append((event,payload))
+    response,_=asyncio.run(agent.run('장면',progress=progress))
+    assert response.search_attempts == len(session.queries) == 1
+    assert not any(event=='replanning' for event,_ in events)
+    assert [payload['attempt'] for event,payload in events if event=='searching']==[0]
