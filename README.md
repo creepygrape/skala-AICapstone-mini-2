@@ -53,21 +53,33 @@ npm --prefix frontend run dev -- --port 5173
 
 브라우저에서 `http://localhost:5173/`에 접속합니다(`127.0.0.1`로 접속하면 일부 영상의 페이지 내 재생이 막힐 수 있습니다). 백엔드 lifespan이 실제 MCP 서버를 시작하고 종료합니다. MCP 서버만 따로 실행하려면 `.venv/bin/python -m backend.app.mcp.server`를 사용합니다(stdout은 프로토콜 전용).
 
-### Day 2 JSON Agent 실행
+### Agent 실행 — LLM 백엔드 교체 (ADR-0008)
 
-기존 Ollama 서버에 `qwen3:8b`가 설치되어 있어야 합니다. 시작 시 설치 여부만 확인하며 모델을 내려받지 않습니다. 기본값은 기존 A/B 검색입니다. Agent를 쓰려면 API를 다음과 같이 실행합니다(기존 API와 동시에 실행하지 마세요).
+`WISH_LLM_BACKEND` 하나로 LLM만 바뀌고 그래프·MCP·검색 코드는 그대로입니다. 개발은 로컬 Ollama, 시연·결과 제출은 OpenAI를 사용합니다. **8000 포트를 이미 쓰고 있는 프로세스는 스크립트가 먼저 종료합니다**(SIGTERM 후 필요하면 SIGKILL).
 
 ```sh
-WISH_AGENT_ENABLED=1 WISH_LLM_MODEL=qwen3:8b HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
+scripts/run_backend.sh ollama   # 개발: 로컬 qwen3:8b, 무료 (모델이 이미 설치되어 있어야 함)
+scripts/run_backend.sh openai   # 시연·제출: 과금, 실행 전 y/N 확인
 ```
+
+프론트엔드는 별도 터미널에서 실행합니다. 5173 포트를 쓰고 있는 프로세스는 먼저 종료하고, `node_modules`가 없으면 `npm ci`를 실행합니다.
+
+```sh
+scripts/run_frontend.sh         # http://localhost:5173/ (127.0.0.1이 아닌 localhost로 접속)
+```
+
+- 스크립트는 `.env`를 읽고 `WISH_AGENT_ENABLED=1`, `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`을 고정합니다.
+- OpenAI 모드는 `.env`에 `OPENAI_API_KEY`가 필요합니다. 기본 모델은 fast `gpt-4o-mini`(route·rewrite), quality `gpt-4o`(verify)이며 `OPENAI_FAST_MODEL`, `OPENAI_QUALITY_MODEL`로 바꿀 수 있습니다(`.env.example` 참고).
+- **OpenAI 모드는 사용자 질문과 검색 후보 자막 일부(최대 3구간, 각 20초 문맥)를 OpenAI API로 전송합니다.** 전체 자막은 전송하지 않습니다.
+- `/ready`의 `llm_backend`로 현재 백엔드와 모델을 확인할 수 있습니다.
+- 수동 실행: `WISH_AGENT_ENABLED=1 WISH_LLM_BACKEND=ollama HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1`
+- 진단: `WISH_AGENT_TRACE=eval/private/traces`를 켜면 요청별 라운드 추적이 Git 제외 폴더에 남고, `.venv/bin/python scripts/show_trace.py`로 확인합니다.
 
 Vue는 `POST /api/search/stream`에 질문을 보내고 `routing/searching/validating/replanning/result/error/done`을 표시합니다. `/ready`의 stage가 `agent_json`이면 Graph 경로입니다. 기존 `POST /api/search` JSON 응답도 평가와 회귀용으로 유지합니다. Router → MCP 검색 → MCP 문맥/원문 검증 → 의미 판정 → 필요한 경우 재검색 → 응답으로 처리합니다. 화자 질문도 장면을 찾으며 화자 확인 불가를 고지합니다. 시각·인용·화자·한국어 설명은 모델 자유 생성으로 만들지 않습니다.
 
 전체 요청 60초, MCP 도구 30초, LLM 호출 20초이며 검색은 최대 3라운드입니다. 모델 장애·잘못된 구조화 응답·MCP 장애는 503의 안전한 `detail.code`로 반환하고 미검증 결과를 내보내지 않습니다. 의미가 불확실한 후보는 `ambiguous`, 범위 밖/일반 대화는 `unsupported`입니다. 동일 검색어를 반복 생성하면 재검색을 조기 종료합니다.
 
-`logs/agent.jsonl`에 request ID·분류·상태·단계별 시간·호출 수·오류를 기록하며 질문·원문을 넣지 않습니다. LangSmith는 `WISH_LANGSMITH_ENABLED=1`과 키가 모두 있을 때만 같은 요약 메타데이터를 전송합니다. 자동 Graph 원문 추적은 비활성화합니다. 키가 없어도 로컬 로그로 동작합니다. 자유 한국어 장면 요약은 현재 제공하지 않고 검증 상태와 화자 한계를 고정 문구로 표시합니다.
-
-진단: `WISH_AGENT_TRACE=eval/private/traces`를 켜면 요청별 라운드 추적(검색어·후보·판정·재작성)이 Git 제외 폴더(`eval/private/` 또는 `logs/`)에만 남고, `.venv/bin/python scripts/show_trace.py`로 읽기 쉽게 볼 수 있습니다. 자막 원문이 들어 있으니 공유하지 마세요.
+`logs/agent.jsonl`에 request ID·분류·상태·단계별 시간·호출 수·LLM 백엔드·입출력 토큰 수·오류를 기록하며 질문·원문을 넣지 않습니다. LangSmith는 `WISH_LANGSMITH_ENABLED=1`과 `LANGSMITH_API_KEY`가 **모두** 있을 때만 켜지며(`LANGCHAIN_*` 변수만으로는 켜지지 않음), 켜면 그래프 노드와 **LLM 호출마다** 모델·토큰·지연·입출력이 `LANGSMITH_PROJECT`(기본 `wish-finder`)에 올라갑니다. **입력에는 사용자 질문과 후보 자막 원문·문맥이 포함됩니다**(ADR-0008) — 개인 워크스페이스의 비공개 프로젝트를 쓰세요. 전송은 백그라운드 배치라 응답을 지연시키지 않고, 실패해도 검색은 계속됩니다. 키가 없어도 로컬 로그로 동작합니다. 자유 한국어 장면 요약은 현재 제공하지 않고 검증 상태와 화자 한계를 고정 문구로 표시합니다.
 
 실제 로컬 Agent 시험은 `scripts/agent_smoke.py`로 실행합니다. 다른 Dense API를 먼저 종료해야 하며 결과는 Git 제외인 `eval/private/day2-agent-smoke.json`에 저장합니다. 기존 결과가 있으면 덮어쓰지 않습니다. gold를 사용하지 않는 데모 확인이며 C 전체 정량 평가는 아닙니다.
 

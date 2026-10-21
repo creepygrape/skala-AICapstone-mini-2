@@ -23,7 +23,7 @@ def configure(monkeypatch, main, model):
     monkeypatch.setenv('WISH_AGENT_ENABLED','1')
     monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
     monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
-    monkeypatch.setattr(main,'OllamaModel',lambda *args:model)
+    monkeypatch.setattr(main,'build_model',lambda *args,**kwargs:model)
 
 
 def test_agent_sse_orders_progress_before_validated_result(monkeypatch,tmp_path):

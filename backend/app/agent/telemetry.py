@@ -1,4 +1,9 @@
-"""Optional metadata-only LangSmith reporting; no raw query/source uploads."""
+"""Optional LangSmith reporting (WISH_LANGSMITH_ENABLED=1 plus LANGSMITH_API_KEY).
+
+When enabled, the agent run is traced (graph nodes plus every LLM call, with the question
+and candidate subtitle excerpts; ADR-0008). One batching client is shared with the
+request-summary reporter; both are off by default.
+"""
 
 import logging
 import os
@@ -43,8 +48,8 @@ class TelemetryPublisher:
     async def start(self):
         if self.enabled:
             try:
-                self.client = await asyncio.to_thread(
-                    Client,auto_batch_tracing=False,timeout_ms=2000)
+                # Batched in a background thread so traces never block a request.
+                self.client = await asyncio.to_thread(Client,timeout_ms=2000)
                 self.task = asyncio.create_task(self._worker())
             except Exception:
                 logger.warning('langsmith_start_failed')
@@ -86,6 +91,9 @@ class TelemetryPublisher:
             self.task = None
         if self.client is not None:
             try:
+                flush = getattr(self.client,'flush',None)
+                if flush is not None:
+                    await asyncio.to_thread(flush)
                 await asyncio.to_thread(self.client.close)
             except Exception:
                 logger.warning('langsmith_close_failed')

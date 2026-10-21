@@ -186,7 +186,7 @@ def test_agent_json_api_with_real_stdio_and_lifespan_cleanup(monkeypatch,tmp_pat
     monkeypatch.setenv('WISH_AGENT_ENABLED','1')
     monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
     monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
-    monkeypatch.setattr(main,'OllamaModel',lambda *args:model)
+    monkeypatch.setattr(main,'build_model',lambda *args,**kwargs:model)
     calls=[]
     original=main.call
     async def record(session,name,args,schema):
@@ -218,7 +218,7 @@ def test_model_failure_after_grounding_returns_non_c_partial_and_releases_busy(
     monkeypatch.setenv('WISH_AGENT_ENABLED','1')
     monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
     monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
-    monkeypatch.setattr(main,'OllamaModel',lambda *args:model)
+    monkeypatch.setattr(main,'build_model',lambda *args,**kwargs:model)
     with TestClient(main.app) as client:
         main.app.state.agent.log_path=tmp_path/'agent.jsonl'
         response=client.post('/api/search',json={'query':'RIKU'})
@@ -238,7 +238,7 @@ def test_model_startup_failure_closes_http_client(monkeypatch):
     monkeypatch.setenv('WISH_AGENT_ENABLED','1')
     monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
     monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
-    monkeypatch.setattr(main,'OllamaModel',lambda *args:model)
+    monkeypatch.setattr(main,'build_model',lambda *args,**kwargs:model)
     with pytest.raises(Exception):
         with TestClient(main.app): pass
     assert model.closed and main.app.state.agent is None
@@ -252,7 +252,7 @@ def test_model_router_failure_has_distinct_api_message(monkeypatch,tmp_path):
     monkeypatch.setenv('WISH_AGENT_ENABLED','1')
     monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
     monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
-    monkeypatch.setattr(main,'OllamaModel',lambda *args:model)
+    monkeypatch.setattr(main,'build_model',lambda *args,**kwargs:model)
     with TestClient(main.app) as client:
         main.app.state.agent.log_path=tmp_path/'agent.jsonl'
         response=client.post('/api/search',json={'query':'RIKU'})
@@ -271,7 +271,7 @@ def test_unexpected_agent_failure_has_distinct_api_message(monkeypatch,tmp_path)
     monkeypatch.setenv('WISH_AGENT_ENABLED','1')
     monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
     monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
-    monkeypatch.setattr(main,'OllamaModel',lambda *args:model)
+    monkeypatch.setattr(main,'build_model',lambda *args,**kwargs:model)
     with TestClient(main.app) as client:
         main.app.state.agent.log_path=tmp_path/'agent.jsonl'
         response=client.post('/api/search',json={'query':'RIKU'})
@@ -401,7 +401,7 @@ def test_langsmith_start_failure_does_not_block_agent_api(monkeypatch,tmp_path):
     monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
     monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
     monkeypatch.setattr(telemetry,'Client',FailingClient)
-    monkeypatch.setattr(main,'OllamaModel',lambda *args:model)
+    monkeypatch.setattr(main,'build_model',lambda *args,**kwargs:model)
     with TestClient(main.app) as client:
         main.app.state.agent.log_path=tmp_path/'agent.jsonl'
         assert client.get('/ready').json()['stage']=='agent_json'

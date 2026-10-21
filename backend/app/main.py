@@ -15,7 +15,7 @@ from backend.app.schemas import MetadataReply, SearchRequest, SearchResponse
 from backend.app.services.search import SearchFailure, call_tool as call, search_and_verify
 from backend.app.services.video_catalog import ROOT, load_videos
 from backend.app.agent.graph import FinderAgent
-from backend.app.agent.model import OllamaModel
+from backend.app.agent.model import build_model
 from backend.app.agent.telemetry import TelemetryPublisher
 from backend.app.sse import MESSAGES, ManagedStreamingResponse, StreamOwner, encode_event, public_error
 
@@ -57,7 +57,7 @@ async def lifespan(app):
                 video = await call(session,'get_video_metadata',{'video_id':video_id},MetadataReply)
                 app.state.videos[video_id] = video
             if os.getenv('WISH_AGENT_ENABLED') == '1':
-                model = OllamaModel(os.getenv('WISH_LLM_MODEL','qwen3:8b'))
+                model = build_model()
                 await model.ready()
                 telemetry = await TelemetryPublisher().start()
                 app.state.agent = FinderAgent(session,app.state.videos,model,
@@ -93,7 +93,9 @@ def health():
 def ready():
     if getattr(app.state,'session',None) is None:
         raise HTTPException(503,"검색 서버가 준비되지 않았습니다.")
-    return {"status":"ready","stage":"agent_json" if app.state.agent else "day1_retrieval"}
+    agent = app.state.agent
+    return {"status":"ready","stage":"agent_json" if agent else "day1_retrieval",
+            "llm_backend":getattr(getattr(agent,'model',None),'name',None)}
 
 
 @app.get('/api/videos')

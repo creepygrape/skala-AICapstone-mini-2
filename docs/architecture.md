@@ -51,9 +51,9 @@ flowchart TB
 | Tracking | LangSmith + 로컬 JSON 로그 | 단계별 지연, 호출, 에러. LangSmith 비활성 환경에서도 실행 유지 |
 | Testing | pytest + 고정 질문/정답 JSONL | 정확성/실패/성능 회귀 검증 |
 
-### 2.1 LLM 선택의 결정은 유보
+### 2.1 LLM 백엔드 (ADR-0008)
 
-로컬 Ollama 또는 사용자가 허용한 API 중 실제 실행 가능한 것을 Codex가 환경조사 후 제안한다. **유료 호출을 사용자 동의 없이 실행하지 않는다.** 분류/검색어 재구성은 작은 모델, 의미 검증/최종 요약은 품질이 나은 모델을 사용할 수 있으나 이것은 P1 최적화다.
+`WISH_LLM_BACKEND` 하나로 교체한다: `ollama`(개발, 기본, `qwen3:8b`) | `openai`(시연·제출, 과금, 기본 fast `gpt-4o-mini` / quality `gpt-4o`). 공통 계약 `JsonLLM`이 프롬프트·스키마를 소유하고 백엔드는 전송만 구현하며, `build_model()`이 lifespan에서 1회 생성해 그래프에 주입한다. route/rewrite는 fast, verify는 quality 모델을 쓴다. **유료 호출을 사용자 동의 없이 실행하지 않는다.** OpenAI 모드는 질문과 후보 자막 일부(최대 3구간, 20초 문맥)만 전송한다.
 
 ## 3. 오프라인 데이터 파이프라인
 
@@ -256,6 +256,7 @@ wish-finder/
 - ADR-0005: Vue + FastAPI POST SSE
 - ADR-0006: 원문 cue 보존/윈도우 청킹/근거 회귀 검증
 - ADR-0007: 결과 카드 YouTube 임베드·플레이어 오류 폴백
+- ADR-0008: 환경변수로 LLM 백엔드 교체(Ollama 개발 / OpenAI 시연·제출)
 
 ## 11. 구현 전 확인사항
 

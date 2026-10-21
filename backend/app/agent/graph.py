@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 import time
 from typing import Awaitable, Callable, Literal, TypedDict
@@ -283,6 +284,12 @@ class FinderAgent:
     def _emit(self, request_id, stats, started, state, error):
         record = self._telemetry(request_id,stats,started,state,error)
         record['stage_tail_ms'] = stats.take_pending()
+        # Numbers and model names only: token counts are the cost proxy for comparisons.
+        usage = getattr(self.model,'usage',None) or {}
+        start = getattr(stats,'usage_start',{})
+        record['llm_backend'] = getattr(self.model,'name',None)
+        record['llm_tokens_in'] = usage.get('tokens_in',0)-start.get('tokens_in',0)
+        record['llm_tokens_out'] = usage.get('tokens_out',0)-start.get('tokens_out',0)
         self._write_trace(record, stats, state)
         try:
             self.log_path.parent.mkdir(parents=True,exist_ok=True)
@@ -293,6 +300,16 @@ class FinderAgent:
         if self.telemetry is not None:
             self.telemetry.submit(record)
         return record
+
+    def _tracing(self, request_id):
+        telemetry = self.telemetry
+        if telemetry is None or not telemetry.enabled or telemetry.client is None:
+            return {'enabled': False}
+        return {'enabled': True, 'client': telemetry.client,
+                'project_name': os.getenv('LANGSMITH_PROJECT', 'wish-finder'),
+                'metadata': {'request_id': request_id,
+                             'llm_backend': getattr(self.model, 'name', None)},
+                'tags': ['wish-finder']}
 
     def _write_trace(self, record, stats, state):
         """Private diagnostic dump; failures never affect the search response."""
@@ -315,13 +332,15 @@ class FinderAgent:
         query = SearchRequest(query=query).query
         request_id = request_id or str(uuid4())
         stats = RunStats(progress, trace=self.trace_dir is not None)
+        stats.usage_start = dict(getattr(self.model,'usage',None) or {})
         stats.user_query = query
         started = time.monotonic()
         error = None
         state = None
         try:
-            # Do not auto-upload raw State/subtitles through ambient LangSmith settings.
-            with tracing_context(enabled=False):
+            # Off unless the user opted in (WISH_LANGSMITH_ENABLED + key): ambient LangSmith
+            # environment variables alone must not upload questions or subtitles.
+            with tracing_context(**self._tracing(request_id)):
                 async with asyncio.timeout(self.timeout):
                     state = await self.graph.ainvoke({'request_id':request_id,'user_query':query,
                         'attempt':0,'warnings':[],'timing':{},'deadline':started+self.timeout},

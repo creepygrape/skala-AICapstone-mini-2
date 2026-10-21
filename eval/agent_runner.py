@@ -17,6 +17,14 @@ class RouteProbe:
     def __init__(self, inner):
         self.inner, self.override, self.first_query, self.calls = inner, None, None, 0
 
+    @property
+    def usage(self):
+        return getattr(self.inner, 'usage', None)
+
+    @property
+    def name(self):
+        return getattr(self.inner, 'name', None)
+
     def arm(self, override=None):
         self.override, self.first_query, self.calls = override, None, 0
 
