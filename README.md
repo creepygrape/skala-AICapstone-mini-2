@@ -65,11 +65,13 @@ npm --prefix frontend run dev -- --port 5173
 
 ```powershell
 py -3.11 -m venv .venv
-.venv\Scripts\python.exe -m pip install -r backendequirements.txt
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 npm --prefix frontend ci
-scriptsun_backend.ps1 openai      # 또는 ollama. openai는 과금 y/N 확인(-Yes로 생략)
-scriptsun_frontend.ps1            # 다른 터미널, http://localhost:5173/
+scripts\run_backend.ps1 openai      # 또는 ollama. openai는 과금 y/N 확인(-Yes로 생략)
+scripts\run_frontend.ps1            # 다른 터미널, http://localhost:5173/
 ```
+
+Git Bash에서는 `scripts/run_backend.sh openai`, `scripts/run_frontend.sh`를 그대로 써도 됩니다(`.venv/Scripts/python.exe` 자동 감지, `netstat`/`taskkill`로 포트 해제, `.sh`는 `.gitattributes`로 LF 고정).
 
 Windows에는 SIGTERM이 없어 8000/5173 포트를 점유한 프로세스는 바로 강제 종료됩니다. 한국어 파일은 UTF-8로 읽도록 고정했습니다.
 

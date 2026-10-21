@@ -13,6 +13,9 @@ export WISH_LLM_BACKEND="$BACKEND"
 export WISH_AGENT_ENABLED=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
 
 source scripts/_free_port.sh
+# Windows (Git Bash) venvs use Scripts/, POSIX venvs use bin/. UTF-8 avoids cp949 file reads.
+PY=.venv/bin/python; [ -x "$PY" ] || PY=.venv/Scripts/python.exe
+export PYTHONUTF8=1
 
 case "$BACKEND" in
     ollama)
@@ -36,4 +39,4 @@ case "$BACKEND" in
 esac
 
 free_port 8000
-exec .venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
+exec "$PY" -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
