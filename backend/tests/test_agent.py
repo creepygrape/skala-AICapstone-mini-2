@@ -16,9 +16,19 @@ from backend.app.services.search import SearchFailure
 from backend.tests.test_search_service import FakeSession
 
 
+# Real keyword retrieval on the synthetic fixture: 'ryokan' surfaces cues 4 and 1, then
+# 'look over there' cue 3, so every replan sees candidates that were never judged before.
+NEW_CANDIDATE_QUERIES=('ryokan','look over there')
+
+
 class ScriptedModel:
-    def __init__(self, verdicts=('relevant',), intent='scene_search', *, same_query=False):
+    def __init__(self, verdicts=('relevant',), intent='scene_search', *, same_query=False, rewrite_queries=None,
+                 route_query='RIKU chose RIKU'):
         self.verdicts, self.intent, self.same_query = verdicts, intent, same_query
+        self.route_query = route_query
+        self.verified_ids, self.feedbacks = [], []
+        # Queries that retrieve different synthetic cues, so each replan sees new candidates.
+        self.rewrite_queries = rewrite_queries
         self.verifications = 0
         self.rewrites = 0
         self.closed = False
@@ -27,15 +37,19 @@ class ScriptedModel:
     async def close(self): self.closed=True
 
     async def route(self, query):
-        return Route(intent=self.intent,search_query='RIKU chose RIKU')
+        return Route(intent=self.intent,search_query=self.route_query)
 
     async def verify(self, query, evidence):
+        self.verified_ids.append([e['evidence_id'] for e in evidence])
         verdict=self.verdicts[min(self.verifications,len(self.verdicts)-1)]
         self.verifications+=1
         return Verification(judgments=[Judgment(evidence_id=e['evidence_id'],verdict=verdict) for e in evidence])
 
     async def rewrite(self, query, previous, feedback):
+        self.feedbacks.append(feedback)
         self.rewrites+=1
+        if self.rewrite_queries:
+            return self.rewrite_queries[min(self.rewrites-1,len(self.rewrite_queries)-1)]
         return previous[-1] if self.same_query else f'RIKU chose RIKU scene {self.rewrites}'
 
 
@@ -54,7 +68,7 @@ def make_agent(tmp_path, model=None, behavior='normal', **kwargs):
     (('irrelevant',),3,'not_found'),(('uncertain',),3,'ambiguous'),
 ])
 def test_bounded_graph_paths_and_grounded_results(tmp_path,verdicts,attempts,status):
-    model=ScriptedModel(verdicts)
+    model=ScriptedModel(verdicts,rewrite_queries=NEW_CANDIDATE_QUERIES)
     agent,session=make_agent(tmp_path,model)
     response,stats=asyncio.run(agent.run('기억나는 장면'))
     assert response.status==status
@@ -313,7 +327,7 @@ def test_replan_budget_preserves_uncertain_evidence(tmp_path):
 
 
 def test_total_timeout_preserves_previous_uncertain_evidence(tmp_path):
-    model=ScriptedModel(('uncertain',))
+    model=ScriptedModel(('uncertain',),rewrite_queries=NEW_CANDIDATE_QUERIES)
     original=model.verify
     async def verify(query,evidence):
         if model.verifications:
@@ -448,10 +462,10 @@ def test_progress_stage_ms_attributes_rewrite_time_to_replanning(tmp_path):
 
 
 def test_trace_is_off_by_default_and_records_rounds_when_enabled(tmp_path):
-    agent,_=make_agent(tmp_path,ScriptedModel(('irrelevant','relevant')))
+    agent,_=make_agent(tmp_path,ScriptedModel(('irrelevant','relevant'),rewrite_queries=NEW_CANDIDATE_QUERIES))
     asyncio.run(agent.run('장면'))
     assert not (tmp_path/'traces').exists()
-    agent,_=make_agent(tmp_path,ScriptedModel(('irrelevant','relevant')),trace_dir=tmp_path/'traces')
+    agent,_=make_agent(tmp_path,ScriptedModel(('irrelevant','relevant'),rewrite_queries=NEW_CANDIDATE_QUERIES),trace_dir=tmp_path/'traces')
     response,_=asyncio.run(agent.run('장면'))
     [path]=list((tmp_path/'traces').glob('*.json'))
     trace=json.loads(path.read_text())
@@ -469,3 +483,50 @@ def test_trace_dir_must_be_private():
     assert trace_dir(None) is None
     assert trace_dir('/tmp/public-traces') is None
     assert trace_dir('eval/private/traces')==(ROOT/'eval/private/traces').resolve()
+
+
+def test_identical_candidates_stop_the_replan_without_asking_the_model_again(tmp_path):
+    model=ScriptedModel(('uncertain',))   # default rewrite keeps retrieving the same cue
+    agent,session=make_agent(tmp_path,model)
+    response,stats=asyncio.run(agent.run('장면'))
+    assert response.status=='ambiguous' and response.search_attempts==2
+    assert model.verifications==1 and model.rewrites==1   # round 2 had nothing new to judge
+    assert stats['llm_calls']==3                          # route + verify + rewrite only
+    assert 'replan_budget_exhausted' not in response.warnings
+
+
+def test_only_unseen_candidates_are_judged_and_earlier_verdicts_are_reused(tmp_path):
+    model=ScriptedModel(('uncertain','relevant'),route_query='ryokan',
+                        rewrite_queries=('ryokan Got myself',))
+    agent,_=make_agent(tmp_path,model)
+    response,stats=asyncio.run(agent.run('장면'))
+    assert model.verified_ids==[['SYNTHETIC01:4','SYNTHETIC01:1'],['SYNTHETIC01:2']]
+    assert response.status=='found' and [r.cue_ids for r in response.results]==[['2']]
+
+
+def test_rewrite_receives_rejected_quotes_to_vary_key_nouns(tmp_path):
+    model=ScriptedModel(('uncertain','relevant'),rewrite_queries=NEW_CANDIDATE_QUERIES)
+    agent,_=make_agent(tmp_path,model)
+    asyncio.run(agent.run('장면'))
+    [feedback]=model.feedbacks[:1]
+    assert feedback==[{'verdict':'uncertain','quote':'(RIKU chose RIKU) Got myself'}]
+
+
+def test_same_cue_with_different_context_is_judged_again(tmp_path):
+    """Overlapping chunks can select one cue with different neighbours: reuse only same context."""
+    model=ScriptedModel(('uncertain','relevant'),rewrite_queries=('Got myself',))
+    agent,_=make_agent(tmp_path,model)
+    original=agent.tool_call
+    searches=0
+    async def changing(session_,name,args,schema):
+        nonlocal searches
+        result=await original(session_,name,args,schema)
+        if name=='search_transcripts':
+            searches+=1
+        if name=='get_scene_context' and searches>1:
+            result.cues=[c for c in result.cues if c.cue_id!='3']   # new context, same selected cue
+        return result
+    agent.tool_call=changing
+    response,_=asyncio.run(agent.run('장면'))
+    assert model.verified_ids==[['SYNTHETIC01:2'],['SYNTHETIC01:2']]   # asked again, not reused
+    assert response.status=='found' and response.search_attempts==2

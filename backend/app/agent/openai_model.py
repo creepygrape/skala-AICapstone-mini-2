@@ -35,8 +35,8 @@ def strict_schema(schema_model):
 class OpenAIModel(JsonLLM):
     backend = 'openai'
 
-    def __init__(self, model='gpt-4o-mini', quality_model='gpt-4o', *, api_key=''):
-        super().__init__(model, quality_model)
+    def __init__(self, model='gpt-4o-mini', quality_model='gpt-4o', *, api_key='', profile=None):
+        super().__init__(model, quality_model, profile=profile)
         self.api_key = api_key
         self.client = httpx.AsyncClient(base_url=OPENAI_BASE_URL, timeout=httpx.Timeout(20),
                                         headers={'Authorization': f'Bearer {api_key}'})

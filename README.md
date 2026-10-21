@@ -1,4 +1,4 @@
-# WISH FINDER — NCT WISH 장면 찾기 AI Agent
+# WISH FINDER — 자막 기반 영상 장면 찾기 AI Agent (첫 적용 대상: NCT WISH)
 
 > **현재 상태:** Day 1 검색 웹 + Day 2 Agent·POST SSE 구현. `WISH_AGENT_ENABLED=1`에서 LangGraph 의미 검증·조건부 최대 2회 재검색과 단계별 웹 진행 상태를 사용합니다.
 
@@ -38,6 +38,12 @@ npm --prefix frontend ci
 ```
 
 실제 corpus는 `data/manifest.local.json`에 등록합니다. 공개 예시는 `data/manifest.example.json`이며, 합성 fixture는 실제 영상 자료가 아닙니다. manifest의 자막 경로는 프로젝트 기준 `data/` 아래에 있어야 합니다. 원본 자막·인덱스·로컬 manifest는 Git에서 제외합니다.
+
+대상 프로필(자막 언어, 번역 여부, 자주 나오는 이름)은 선택 사항입니다. 없으면 일반 기본값으로 조용히 동작하므로, 첫 적용 대상(NCT WISH)의 이름 사전·번역 안내를 쓰려면 예시를 복사해 두세요(`data/profile.local.json`은 Git 제외).
+
+```sh
+cp data/profile.example.json data/profile.local.json
+```
 
 기존 로컬 bge-m3 캐시만 사용합니다. 자동 모델 다운로드는 하지 않습니다. 캐시가 다른 위치라면 `WISH_EMBEDDING_PATH`에 완전한 로컬 모델 경로를 지정하세요.
 

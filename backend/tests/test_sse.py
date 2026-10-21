@@ -5,7 +5,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from backend.tests.test_agent import ScriptedModel
+from backend.tests.test_agent import NEW_CANDIDATE_QUERIES, ScriptedModel
 from backend.app.services.search import SearchFailure
 
 
@@ -51,7 +51,7 @@ def test_agent_sse_orders_progress_before_validated_result(monkeypatch,tmp_path)
 
 def test_agent_sse_replanning_attempts_are_bounded(monkeypatch,tmp_path):
     import backend.app.main as main
-    model=ScriptedModel(('irrelevant','irrelevant','relevant'))
+    model=ScriptedModel(('irrelevant','irrelevant','relevant'),rewrite_queries=NEW_CANDIDATE_QUERIES)
     configure(monkeypatch,main,model)
     with TestClient(main.app) as client:
         main.app.state.agent.log_path=tmp_path/'agent.jsonl'

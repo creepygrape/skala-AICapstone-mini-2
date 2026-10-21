@@ -8,6 +8,7 @@ from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
 from backend.app.schemas import ContextReply, MetadataReply, SearchReply
+from backend.app.profile import load_profile
 from backend.app.services.video_catalog import Catalog, ROOT
 from backend.app.retrieval.hybrid import LocalEncoder, Retriever
 from backend.app.mcp.search_gate import SearchGate
@@ -18,7 +19,7 @@ search_gate = SearchGate()
 
 @lru_cache(maxsize=1)
 def resources():
-    catalog = Catalog()
+    catalog = Catalog(profile=load_profile())
     encoder = None if os.getenv("WISH_KEYWORD_ONLY") == "1" else LocalEncoder(os.getenv("WISH_EMBEDDING_PATH"))
     return catalog, Retriever(catalog, encoder, ROOT / "data/index")
 

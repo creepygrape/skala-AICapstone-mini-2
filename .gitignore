@@ -5,6 +5,7 @@
 /data/cache/
 /data/processed/
 /data/manifest.local.json
+/data/profile.local.json
 /eval/private/
 /logs/
 *.srt

@@ -16,6 +16,7 @@ from backend.app.services.search import SearchFailure, call_tool as call, search
 from backend.app.services.video_catalog import ROOT, load_videos
 from backend.app.agent.graph import FinderAgent
 from backend.app.agent.model import build_model
+from backend.app.profile import load_profile
 from backend.app.agent.telemetry import TelemetryPublisher
 from backend.app.sse import MESSAGES, ManagedStreamingResponse, StreamOwner, encode_event, public_error
 
@@ -57,7 +58,7 @@ async def lifespan(app):
                 video = await call(session,'get_video_metadata',{'video_id':video_id},MetadataReply)
                 app.state.videos[video_id] = video
             if os.getenv('WISH_AGENT_ENABLED') == '1':
-                model = build_model()
+                model = build_model(profile=load_profile())
                 await model.ready()
                 telemetry = await TelemetryPublisher().start()
                 app.state.agent = FinderAgent(session,app.state.videos,model,

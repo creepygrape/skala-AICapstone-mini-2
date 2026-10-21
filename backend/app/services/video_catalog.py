@@ -22,8 +22,9 @@ def load_videos(manifest: Path | None = None) -> list[Video]:
 
 
 class Catalog:
-    def __init__(self, manifest: Path | None = None):
+    def __init__(self, manifest: Path | None = None, profile=None):
         self.videos, self.cues = {}, {}
+        find_mentions = profile.mentions if profile else None
         for video in load_videos(manifest):
             if video.video_id in self.videos:
                 raise ValueError("Duplicate video ID")
@@ -31,7 +32,7 @@ class Catalog:
             if not source.is_relative_to((ROOT / "data").resolve()):
                 raise ValueError("Transcript must be under data/")
             self.videos[video.video_id] = video
-            self.cues[video.video_id] = parse_srt(source, video.video_id)
+            self.cues[video.video_id] = parse_srt(source, video.video_id, find_mentions)
         if not self.videos:
             raise ValueError("Empty catalog")
 
