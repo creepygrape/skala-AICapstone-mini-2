@@ -270,7 +270,7 @@ wish-finder/
 
 `POST /api/search`는 실제 MCP 검색 → 문맥 → 메타데이터를 호출하고 원문 cue에서 인용·시각·URL을 결정적으로 구성한다. 검색 후보에 `selected_cue_id`를 추가해 문맥·chunk cue IDs 내 포함 여부를 검증한다. 의미 검증을 생략한 후보는 `partial`과 경고로 반환하며 최종 Agent 결과로 취급하지 않는다. JSON API는 Day 2에 Graph와 통합한다.
 
-API는 단일 worker·동시 검색 1건을 사용하며 추가 검색은 503으로 거절한다. 모델과 인덱스는 MCP 서버에만 로드한다. `/health`, `/ready`, `/api/videos`를 제공한다. POST SSE는 아직 미구현이다.
+API는 단일 worker·동시 검색 1건을 사용하며 추가 검색은 503으로 거절한다. 모델과 인덱스는 MCP 서버에만 로드한다. `/health`, `/ready`, `/api/videos`를 제공한다.
 
 ## 13. Day 2 첫 리뷰 구현 상태 (2026-10-21)
 
@@ -281,3 +281,9 @@ API는 단일 worker·동시 검색 1건을 사용하며 추가 검색은 503으
 의미적으로 관련한 후보가 없을 때만 최대 2회 재검색하며 query 중복 또는 전체 60초 예산 소진 시 종료한다. 관련성이 불확실한 원문 근거는 ambiguous, 후보 원문 검증 실패는 unsupported, 정상 검색 후 관련 근거 없음은 not_found다. 도구/모델 오류는 재검색하지 않고 503으로 전달한다. MCP 30초/LLM 20초 제한과 busy 보호는 유지한다.
 
 JSONL 로컬 로그에는 요청 ID·의도·상태·단계별 시간·Tool/LLM 호출·오류만 기록한다. 자동 LangSmith 원문 추적은 끄고 별도 opt-in+키가 있을 때 요약 메타데이터만 전송한다. SSE와 Vue 진행 상태는 다음 PR 범위이며 P0에서 제외하지 않는다. C 전체 정량 평가는 아직 미측정이다.
+
+## 14. Day 2 SSE·Vue 구현 상태 (2026-10-21)
+
+`POST /api/search/stream`은 Graph의 공개 진행 콜백을 SSE로 변환한다. `routing/searching/validating/replanning`에는 request ID·단계·검색 attempt·고정 문구만 포함하고, `result`는 최종 `SearchResponse` 생성 이후 한 번만 전송한다. 내부 LangGraph 이벤트나 모델 추론 내용을 그대로 노출하지 않는다.
+
+입력 검증·readiness·동시 요청은 스트림 전 HTTP 오류, 실행 중 모델·Agent·MCP 실패는 `error → done(status=error)` 계약을 사용한다. Vue는 POST fetch와 ReadableStream으로 LF/CRLF, 분할 UTF-8, 분할/복수 프레임, 멀티라인 data를 처리한다. 연결이 `done` 전에 종료되면 성공 결과를 표시하지 않는다. 기존 JSON API는 평가·회귀 경로로 유지한다.

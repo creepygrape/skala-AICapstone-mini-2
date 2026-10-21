@@ -5,7 +5,7 @@ import json
 import logging
 from pathlib import Path
 import time
-from typing import Literal, TypedDict
+from typing import Awaitable, Callable, Literal, TypedDict
 from uuid import uuid4
 
 from langgraph.graph import END, START, StateGraph
@@ -44,7 +44,7 @@ class FinderState(TypedDict, total=False):
 
 
 class RunStats:
-    def __init__(self):
+    def __init__(self, progress=None):
         self.tool_calls = 0
         self.llm_calls = 0
         self.search_attempts = 0
@@ -53,6 +53,7 @@ class RunStats:
         self.best_uncertain = []
         self.timing = {}
         self.intent = None
+        self.progress = progress
 
 
 class FinderAgent:
@@ -83,6 +84,11 @@ class FinderAgent:
             stats = config['configurable']['stats']
             started = time.monotonic()
             try:
+                event = {'router':'routing','search':'searching','context':'validating',
+                         'replan':'replanning'}.get(name)
+                if event and stats.progress is not None:
+                    attempt = state.get('attempt',0)+(1 if name=='replan' else 0)
+                    await stats.progress(event,{'attempt':attempt})
                 return await getattr(self, '_'+name)(state, stats)
             finally:
                 stats.stages.append({'node':name,'attempt':state.get('attempt',0),
@@ -246,10 +252,11 @@ class FinderAgent:
             self.telemetry.submit(record)
         return record
 
-    async def run(self, query, *, request_id=None):
+    async def run(self, query, *, request_id=None,
+                  progress: Callable[[str,dict],Awaitable[None]] | None = None):
         query = SearchRequest(query=query).query
         request_id = request_id or str(uuid4())
-        stats = RunStats()
+        stats = RunStats(progress)
         started = time.monotonic()
         error = None
         state = None

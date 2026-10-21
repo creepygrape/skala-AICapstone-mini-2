@@ -8,6 +8,7 @@ import time
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 
 from backend.app.mcp.client import connect
 from backend.app.schemas import MetadataReply, SearchRequest, SearchResponse
@@ -16,6 +17,7 @@ from backend.app.services.video_catalog import load_videos
 from backend.app.agent.graph import FinderAgent
 from backend.app.agent.model import OllamaModel
 from backend.app.agent.telemetry import TelemetryPublisher
+from backend.app.sse import MESSAGES, encode_event, public_error
 
 logger = logging.getLogger("wish_finder")
 
@@ -97,15 +99,75 @@ async def search(request: SearchRequest):
         return execution.response
     except SearchFailure as exc:
         logger.warning('search_failed request_id=%s code=%s', request_id, exc.code)
-        if exc.code == 'search_busy':
-            message = '이전 검색을 마무리 중입니다. 잠시 후 다시 시도해 주세요.'
-        elif exc.code.startswith('model_'):
-            message = '의미 검증 모델에 오류가 발생했습니다. 다시 시도해 주세요.'
-        elif exc.code == 'agent_failure':
-            message = '검색 처리 중 오류가 발생했습니다. 다시 시도해 주세요.'
-        else:
-            message = '검색 도구에 오류가 발생했습니다. 다시 시도해 주세요.'
-        raise HTTPException(503,detail={'request_id':request_id,'message':message,'code':exc.code}) from None
+        code,message = public_error(exc)
+        raise HTTPException(503,detail={'request_id':request_id,'message':message,'code':code}) from None
     finally:
         app.state.busy=False
         logger.info('search request_id=%s elapsed_seconds=%.3f',request_id,time.monotonic()-start)
+
+
+@app.post('/api/search/stream')
+async def search_stream(request: SearchRequest):
+    """Stream public progress and emit results only after the search completes."""
+    ready()
+    if app.state.busy:
+        raise HTTPException(503,'다른 검색이 진행 중입니다. 잠시 후 다시 시도해 주세요.')
+    app.state.busy=True
+    request_id=str(uuid4());started=time.monotonic()
+    queue=asyncio.Queue(maxsize=32)
+
+    async def progress(event, payload):
+        data={'request_id':request_id,'message':MESSAGES[event],**payload}
+        await queue.put((event,data))
+
+    async def execute():
+        try:
+            mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid'
+            if app.state.agent is not None:
+                response,_=await app.state.agent.run(
+                    request.query,request_id=request_id,progress=progress)
+            else:
+                await progress('searching',{'attempt':0})
+                await progress('validating',{'attempt':0})
+                execution=await search_and_verify(app.state.session,request.query,mode,
+                    app.state.videos,request_id=request_id,tool_call=call)
+                response=execution.response
+            await queue.put(('result',response.model_dump()))
+            await queue.put(('done',{'request_id':request_id,'status':response.status}))
+        except SearchFailure as exc:
+            logger.warning('stream_search_failed request_id=%s code=%s',request_id,exc.code)
+            code,message=public_error(exc)
+            await queue.put(('error',{'request_id':request_id,'code':code,'message':message}))
+            await queue.put(('done',{'request_id':request_id,'status':'error'}))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception('stream_search_failed request_id=%s code=agent_failure',request_id)
+            exc=SearchFailure('agent_failure')
+            code,message=public_error(exc)
+            await queue.put(('error',{'request_id':request_id,'code':code,'message':message}))
+            await queue.put(('done',{'request_id':request_id,'status':'error'}))
+        finally:
+            await queue.put((None,None))
+
+    async def events():
+        task=asyncio.create_task(execute())
+        try:
+            while True:
+                event,data=await queue.get()
+                if event is None:
+                    break
+                yield encode_event(event,data)
+        finally:
+            if not task.done():
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            app.state.busy=False
+            logger.info('stream_search request_id=%s elapsed_seconds=%.3f',
+                        request_id,time.monotonic()-started)
+
+    return StreamingResponse(events(),media_type='text/event-stream',headers={
+        'Cache-Control':'no-cache','X-Accel-Buffering':'no'})
