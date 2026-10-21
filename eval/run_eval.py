@@ -18,7 +18,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from backend.app.agent.graph import FinderAgent
-from backend.app.agent.model import OllamaModel
+from backend.app.agent.model import build_model
 from backend.app.mcp.client import connect
 from backend.app.schemas import MetadataReply, SearchResponse
 from backend.app.services.search import SearchFailure, call_tool, search_and_verify
@@ -161,12 +161,14 @@ async def run(args):
                                       for vid,v in metadata.items()}
             agent = probe = None
             if use_agent:
-                model = OllamaModel(os.getenv('WISH_LLM_MODEL','qwen3:8b'))
+                model = build_model()
                 await model.ready()
-                output['agent_model'] = model.model
+                output['agent_model'] = model.name
                 probe = RouteProbe(model)
                 agent = FinderAgent(session,metadata,probe,mode='hybrid',
-                                    log_path=private_output('eval/private/agent-eval.jsonl'))
+                                    log_path=private_output('eval/private/agent-eval.jsonl'),
+                                    trace_dir=private_output(os.environ['WISH_AGENT_TRACE'])
+                                    if os.getenv('WISH_AGENT_TRACE') else None)
             router_queries = {}
             for task in tasks:
                 if task['kind']=='agent':

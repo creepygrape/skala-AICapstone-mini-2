@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 
 from backend.app.agent.graph import FinderAgent
-from backend.app.agent.model import OllamaModel
+from backend.app.agent.model import build_model
 from backend.app.mcp.client import connect
 from backend.app.schemas import MetadataReply
 from backend.app.services.search import SearchFailure, call_tool
@@ -25,7 +25,7 @@ async def main():
     output=private_output('eval/private/day2-agent-smoke.json')
     if output.exists():
         raise ValueError('Smoke output already exists; preserve previous measurements')
-    model=OllamaModel(os.getenv('WISH_LLM_MODEL','qwen3:8b'))
+    model=build_model()
     records=[]
     try:
         await model.ready()
@@ -48,7 +48,7 @@ async def main():
                 except SearchFailure as exc:
                     records.append({'case':name,'error':exc.code,'tool_calls':exc.tool_calls})
                     print(json.dumps({'case':name,'error':exc.code}),flush=True)
-                write_private_json(output,{'model':model.model,'records':records})
+                write_private_json(output,{'model':model.name,'records':records})
     finally:
         await model.close()
 
