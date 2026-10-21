@@ -530,3 +530,79 @@ def test_same_cue_with_different_context_is_judged_again(tmp_path):
     response,_=asyncio.run(agent.run('장면'))
     assert model.verified_ids==[['SYNTHETIC01:2'],['SYNTHETIC01:2']]   # asked again, not reused
     assert response.status=='found' and response.search_attempts==2
+
+
+class FollowUpModel(ScriptedModel):
+    """Records the router history and what verification / rewrite receive."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.histories, self.verify_calls = [], []
+
+    async def route(self, query, history=None):
+        self.histories.append(history)
+        return Route(intent=self.intent,search_query=self.route_query)
+
+    async def verify(self, query, evidence, history=None, resolved_query=None):
+        self.verify_calls.append({'question':query,'history':history,'resolved':resolved_query})
+        return await super().verify(query,evidence)
+
+    async def rewrite(self, query, previous, feedback):
+        self.rewrite_question = query
+        return await super().rewrite(query,previous,feedback)
+
+
+def test_follow_up_keeps_original_question_and_passes_resolved_query_separately(tmp_path):
+    model=FollowUpModel(('relevant',))
+    agent,_=make_agent(tmp_path,model)
+    history=[{'query':'료칸 장면','top':None}]
+    asyncio.run(agent.run('다른 장면도',history=history))
+    assert model.histories==[history]
+    # Criterion stays the user's words; the Router rewrite is context only.
+    assert model.verify_calls==[{'question':'다른 장면도','history':history,'resolved':'RIKU chose RIKU'}]
+    plain=FollowUpModel(('relevant',))
+    plain_agent,_=make_agent(tmp_path,plain)
+    asyncio.run(plain_agent.run('기억나는 장면'))
+    assert plain.verify_calls==[{'question':'기억나는 장면','history':None,'resolved':None}]
+
+
+def test_follow_up_replan_rewrites_from_resolved_query(tmp_path):
+    model=FollowUpModel(('irrelevant','relevant'),rewrite_queries=NEW_CANDIDATE_QUERIES)
+    agent,_=make_agent(tmp_path,model)
+    asyncio.run(agent.run('다른 장면도',history=[{'query':'료칸 장면','top':None}]))
+    assert model.rewrite_question=='RIKU chose RIKU'
+    assert {c['question'] for c in model.verify_calls}=={'다른 장면도'}
+
+
+def test_exclude_drops_shown_scene_without_rejecting_it(tmp_path):
+    agent,_=make_agent(tmp_path,ScriptedModel(('relevant',)))
+    first,_=asyncio.run(agent.run('장면'))
+    shown=[f'{r.video_id}:{r.cue_ids[0]}' for r in first.results]
+    assert shown
+    agent2,_=make_agent(tmp_path,ScriptedModel(('relevant',)))
+    second,_=asyncio.run(agent2.run('장면',exclude=shown))
+    assert not {f'{r.video_id}:{r.cue_ids[0]}' for r in second.results} & set(shown)
+    assert 'evidence_rejected' not in second.warnings
+    assert second.status!='unsupported'
+
+
+def test_exclude_is_filtered_before_context_calls(tmp_path):
+    from backend.app.services.search import call_tool
+    def counting(calls):
+        async def tool(session,name,arguments,schema):
+            calls.append((name,arguments))
+            return await call_tool(session,name,arguments,schema)
+        return tool
+    base_calls=[]
+    agent,_=make_agent(tmp_path,ScriptedModel(('relevant',)),tool_call=counting(base_calls))
+    first,_=asyncio.run(agent.run('장면'))
+    base=sum(n=='get_scene_context' for n,_ in base_calls)
+    shown=[f'{r.video_id}:{r.cue_ids[0]}' for r in first.results]
+    # 19 junk + duplicates + the real shown keys: the cap and dedupe keep this cheap.
+    exclude=[f'SYNTHETIC01:junk{i}' for i in range(20-len(shown))]+shown
+    calls=[]
+    agent2,_=make_agent(tmp_path,ScriptedModel(('relevant',)),tool_call=counting(calls))
+    asyncio.run(agent2.run('장면',exclude=exclude+exclude))
+    contexts=sum(n=='get_scene_context' for n,_ in calls)
+    assert [a['top_k'] for n,a in calls if n=='search_transcripts'][0]==min(3+len(set(exclude)),20)
+    assert contexts<=3
+    assert contexts<=base

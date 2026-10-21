@@ -8,10 +8,10 @@ from pathlib import Path
 import time
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 
 from backend.app.mcp.client import connect
-from backend.app.schemas import MetadataReply, SearchRequest, SearchResponse
+from backend.app.schemas import MetadataReply, NeighborsReply, SearchRequest, SearchResponse
 from backend.app.services.search import SearchFailure, call_tool as call, search_and_verify
 from backend.app.services.video_catalog import ROOT, load_videos
 from backend.app.agent.graph import FinderAgent
@@ -105,12 +105,37 @@ async def videos():
     return {"videos":[video.model_dump() for video in app.state.videos.values()]}
 
 
-async def run_search(query: str, request_id: str, progress=None, timings=None) -> SearchResponse:
+@app.get('/api/videos/{video_id}/cues/{cue_id}/context')
+async def cue_context(video_id: str, cue_id: str,
+                      before: int = Query(3, ge=0, le=5), after: int = Query(3, ge=0, le=5)):
+    """Read-only source cues around a result cue; allowed while a search is running."""
+    ready()
+    if video_id not in app.state.videos:
+        raise HTTPException(404, '등록되지 않은 영상입니다.')
+    try:
+        reply = await call(app.state.session,'get_cue_neighbors',
+            {'video_id':video_id,'cue_id':cue_id,'before':before,'after':after},NeighborsReply)
+    except SearchFailure as exc:
+        code, message = public_error(exc)
+        if code == 'tool_failure':
+            raise HTTPException(404, '해당 자막 구간을 찾을 수 없습니다.') from None
+        raise HTTPException(503, message) from None
+    return {'video_id':reply.video_id,'target_cue_id':reply.target_cue_id,
+            'cues':[{'cue_id':c.cue_id,'start_seconds':c.start_seconds,'end_seconds':c.end_seconds,
+                     'text':c.original_text,'caption_type':c.caption_type} for c in reply.cues]}
+
+
+async def run_search(query: str, request_id: str, progress=None, timings=None,
+                     history=None, exclude=None) -> SearchResponse:
     """Run the shared JSON/SSE pipeline; raise only safe SearchFailure errors."""
     started = time.monotonic()
     try:
         if app.state.agent is not None:
             kwargs = {'request_id': request_id}
+            if history:
+                kwargs['history'] = history
+            if exclude:
+                kwargs['exclude'] = exclude
             if progress is not None:
                 kwargs['progress'] = progress
             response, record = await app.state.agent.run(query, **kwargs)
@@ -132,6 +157,10 @@ async def run_search(query: str, request_id: str, progress=None, timings=None) -
                     request_id, time.monotonic()-started)
 
 
+def history_of(request):
+    return [turn.model_dump() for turn in request.history]
+
+
 def reserve_search():
     """Reserve one search atomically on the single-worker event loop."""
     ready()
@@ -145,7 +174,8 @@ async def search(request: SearchRequest):
     reserve_search()
     request_id = str(uuid4())
     try:
-        return await run_search(request.query, request_id)
+        return await run_search(request.query, request_id, history=history_of(request),
+                                exclude=request.exclude)
     except SearchFailure as exc:
         code, message = public_error(exc)
         raise HTTPException(503, detail={'request_id':request_id,
@@ -178,7 +208,8 @@ async def search_stream(request: SearchRequest):
 
     async def execute():
         try:
-            response = await run_search(request.query, request_id, progress, timings)
+            response = await run_search(request.query, request_id, progress, timings,
+                history=history_of(request), exclude=request.exclude)
             await queue.put(('result', response.model_dump()))
             done = {'request_id':request_id, 'status':response.status, 'elapsed_ms':elapsed_ms()}
             if timings.get('stage_ms'):

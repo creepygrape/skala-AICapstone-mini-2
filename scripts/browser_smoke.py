@@ -49,17 +49,17 @@ async def main():
 
         await command('Page.enable')
         await command('Page.navigate',{'url':'http://localhost:5173/'})
-        await wait_for("document.querySelector('#query') !== null",10)
+        await wait_for("document.querySelector('textarea') !== null",10)
         await evaluate("window.__wishResults=[]; const originalFetch=window.fetch; window.fetch=async (...args) => { const response=await originalFetch(...args); if(String(args[0]).includes('/search/stream')) response.clone().text().then(text => { for(const frame of text.split('\\n\\n')) if(frame.startsWith('event: result')) window.__wishResults.push(JSON.parse(frame.split('data: ')[1])); }).catch(() => {}); return response; }")
-        await evaluate("window.__wishProgress=[]; new MutationObserver(() => { const n=document.querySelector('.steps'); if(n) window.__wishProgress.push(n.textContent) }).observe(document.body,{subtree:true,childList:true,characterData:true})")
-        await evaluate("document.querySelector('#query').value='리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면'; document.querySelector('#query').dispatchEvent(new Event('input',{bubbles:true}));")
+        await evaluate("window.__wishProgress=[]; new MutationObserver(() => { const n=document.querySelector('.progress'); if(n) window.__wishProgress.push(n.textContent) }).observe(document.body,{subtree:true,childList:true,characterData:true})")
+        await evaluate("document.querySelector('textarea').value='리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면'; document.querySelector('textarea').dispatchEvent(new Event('input',{bubbles:true}));")
         await asyncio.sleep(.1)
         await evaluate("document.querySelector('form').requestSubmit()")
-        await wait_for("document.querySelector('article a') !== null || document.querySelector('[role=alert]') !== null")
+        await wait_for("document.querySelector('.detail .yt') !== null || document.querySelector('[role=alert]') !== null")
         assert not await evaluate("!!document.querySelector('[role=alert]')")
-        href = await evaluate("document.querySelector('article a').href")
+        href = await evaluate("document.querySelector('.detail .yt').href")
         assert href=='https://www.youtube.com/watch?v=1HJgbE66GI4&t=189s', href
-        assert await evaluate("document.querySelector('article blockquote').textContent.includes('(RIKU chose RIKU)')")
+        assert await evaluate("document.querySelector('.card .quote').textContent.includes('(RIKU chose RIKU)')")
         assert await evaluate("document.body.textContent.includes('화자 미확인')")
         await wait_for("window.__wishResults.length === 1")
         result = await evaluate("window.__wishResults[0].results[0]")
@@ -70,34 +70,34 @@ async def main():
         assert any('원문과 시점' in item for item in progress),progress
         # steps accumulate: the final snapshot keeps earlier stages with durations
         assert '질문 유형 파악 완료' in progress[-1] and '소요' in progress[-1],progress[-1]
-        await wait_for("document.querySelector('article iframe') !== null",15)
-        src = await evaluate("document.querySelector('article iframe').src")
+        await wait_for("document.querySelector('.detail iframe') !== null",15)
+        src = await evaluate("document.querySelector('.detail iframe').src")
         assert 'youtube.com/embed/1HJgbE66GI4' in src and 'start=189' in src, src
         # Verified: iframe src. NOT verified here: actual playback/seek success inside the
         # YouTube player and the blocked-video fallback (they need a real player; see unit tests).
         print('verified: iframe src; unverified: real playback/seek and blocked-video fallback')
 
-        await evaluate("document.querySelector('#query').value='료칸이 뭐냐고 물었던 사람은 누구야? 그 장면 찾아줘'; document.querySelector('#query').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('form').requestSubmit()")
-        await wait_for("document.querySelector('article') !== null && !document.querySelector('button[type=submit]').disabled")
+        await evaluate("document.querySelector('textarea').value='료칸이 뭐냐고 물었던 사람은 누구야? 그 장면 찾아줘'; document.querySelector('textarea').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('form').requestSubmit()")
+        await wait_for("document.querySelector('.turn:last-child .results') !== null && !document.querySelector('.composer .cancel')")
         assert await evaluate("document.body.textContent.includes('자막에는 화자 정보가 없어 발화자는 확인할 수 없습니다.')")
-        assert await evaluate("document.querySelector('article').textContent.includes('화자 미확인')")
+        assert await evaluate("document.querySelector('.detail').textContent.includes('화자 미확인')")
         await wait_for("window.__wishResults.length === 2")
         assert await evaluate("window.__wishResults[1].results.every(item => item.speaker === null)")
 
 
-        await evaluate("document.querySelector('#query').value='리쿠가 마니또 뽑을 때 입은 옷 색깔은 뭐야?'; document.querySelector('#query').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('form').requestSubmit()")
-        await wait_for("document.body.textContent.includes('자막으로 확인할 수 없는 요청이에요') && !document.querySelector('button[type=submit]').disabled")
-        assert not await evaluate("!!document.querySelector('article')")
+        await evaluate("document.querySelector('textarea').value='리쿠가 마니또 뽑을 때 입은 옷 색깔은 뭐야?'; document.querySelector('textarea').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('form').requestSubmit()")
+        await wait_for("document.body.textContent.includes('자막으로 확인할 수 없는 요청이에요') && !document.querySelector('.composer .cancel')")
+        assert not await evaluate("!!document.querySelector('.turn:last-child .card')")
         # Cancel while the actual model is waiting, then prove the API is reusable.
-        await evaluate("document.querySelector('#query').value='리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면'; document.querySelector('#query').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('form').requestSubmit()")
-        await wait_for("document.querySelector('button.cancel') !== null")
-        await evaluate("document.querySelector('button.cancel').click()")
-        await wait_for("document.querySelector('[role=alert]')?.textContent.includes('취소') && !document.querySelector('button[type=submit]').disabled")
+        await evaluate("document.querySelector('textarea').value='리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면'; document.querySelector('textarea').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('form').requestSubmit()")
+        await wait_for("document.querySelector('.composer .cancel') !== null")
+        await evaluate("document.querySelector('.composer .cancel').click()")
+        await wait_for("document.querySelector('[role=alert]')?.textContent.includes('취소') && !document.querySelector('.composer .cancel')")
         await asyncio.sleep(.5)
-        await evaluate("document.querySelector('form').requestSubmit()")
-        await wait_for("!document.querySelector('button[type=submit]').disabled")
+        await evaluate("document.querySelector('textarea').value='리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면'; document.querySelector('textarea').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('form').requestSubmit()")
+        await wait_for("!document.querySelector('.composer .cancel')")
         assert not await evaluate("!!document.querySelector('[role=alert]')"), await evaluate("document.body.textContent")
-        assert await evaluate("document.querySelector('article a')?.href") == href
+        assert await evaluate("document.querySelector('.detail .yt')?.href") == href
         screenshot = await command('Page.captureScreenshot',{'format':'png','captureBeyondViewport':True})
         target=Path('/private/tmp/wish-finder-day2-sse.png')
         target.write_bytes(base64.b64decode(screenshot['data']))

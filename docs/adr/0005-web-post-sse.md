@@ -52,3 +52,6 @@ JSON/SSE는 공통 실행 함수로 검색 분기·오류 변환·로그를 공�
 ### 보강 — 노드별 실제 시간 `stage_ms` (PR #6 리뷰 반영)
 
 `elapsed_ms`의 이벤트 간 차이는 노드별 시간이 아니다. `replanning`은 rewrite 완료 후 발행(PR #4 계약)되므로 rewrite 시간이 직전 validating에 합산되고, 마지막 구간에는 finalize가 섞인다. 이벤트 이름·발행 시점은 유지하고, 진행 이벤트와 `done`에 가산 필드 `stage_ms`(마지막 공개 이벤트 이후 완료된 노드별 ms: `router/search/context/verification/replan/finalize`)를 추가한다. 프론트(`api/steps.js`)는 routing←router, searching←search, validating←context+verification, replanning←replan으로 매핑하고 `finalize`는 총 시간에만 반영한다. 비-Agent 폴백 경로처럼 `stage_ms`가 없으면 `elapsed_ms` 이벤트 간 경과로 대체하며 이 경우 값은 노드별 시간이 아니라 공개 이벤트 사이 경과 시간이다. `error` 이벤트 또는 `done.status=error`는 실행 중 단계를 완료가 아닌 실패로 표시한다. 검증: `test_agent.py`(rewrite 지연 시 `stage_ms.replan` 귀속), `steps.test.js`(실제 이벤트 순서).
+
+## 갱신 (ADR-0010)
+SSE 이벤트 종류·순서는 불변이다. 요청 본문에 선택 필드 `history`(최대 3턴)와 `exclude`(최대 20)가 추가됐고, 없으면 기존과 같다. 프론트는 한 화면의 단일 응답 대신 대화 목록에 턴별로 이벤트를 누적한다.

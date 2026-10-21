@@ -43,3 +43,11 @@ export const abortRunning = (steps, now = 0) => closeRunning(steps, 'aborted', {
 
 export const totalDuration = (steps, doneMs) =>
   isNum(doneMs) ? doneMs : steps.reduce((sum, step) => sum + step.durationMs, 0)
+
+// [running, done, failed] wording per public SSE event.
+export const STEP_LABELS = {
+  routing: ['질문 유형을 파악하고 있어요.', '질문 유형 파악 완료', '질문 유형을 파악하지 못했어요'],
+  searching: ['관련 장면을 검색 중이에요.', '관련 장면 검색 완료', '관련 장면을 검색하지 못했어요'],
+  validating: ['원문과 시점을 확인하고 있어요.', '원문과 시점 확인 완료', '원문과 시점을 확인하지 못했어요'],
+  replanning: ['다른 표현으로 다시 찾고 있어요.', '재검색어 준비 완료', '재검색어를 준비하지 못했어요'],
+}

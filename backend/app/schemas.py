@@ -1,6 +1,6 @@
 """Shared source, tool and API contracts. Speakers are unknown in this corpus."""
 
-from typing import Literal
+from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from backend.app.services.urls import video_url
 
@@ -57,6 +57,13 @@ class ContextReply(BaseModel):
     cues: list[Cue]
 
 
+class NeighborsReply(BaseModel):
+    """Source cues around one cue, in video order and never crossing videos."""
+    video_id: str
+    target_cue_id: str
+    cues: list[Cue]
+
+
 class MetadataReply(BaseModel):
     video_id: str
     title: str
@@ -65,9 +72,25 @@ class MetadataReply(BaseModel):
     timing_verified: bool = Field(description="사용자의 일부 시점 표본 확인. 전체 cue 검증 아님.")
 
 
+class HistoryTop(BaseModel):
+    video_id: str = Field(max_length=32)
+    title: str = Field(max_length=200)
+    start_seconds: float = Field(ge=0)
+    evidence_text: str = Field(max_length=120)
+
+
+class HistoryTurn(BaseModel):
+    """Compact previous turn: only used to resolve references in a follow-up, never as evidence."""
+    query: str = Field(min_length=1, max_length=300)
+    top: HistoryTop | None = None
+
+
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     thread_id: str | None = Field(default=None, max_length=128)
+    history: list[HistoryTurn] = Field(default_factory=list, max_length=3)
+    exclude: list[Annotated[str, Field(max_length=64)]] = Field(
+        default_factory=list, max_length=20, description='이미 보여 준 "video_id:cue_id" 키')
 
     @field_validator("query")
     @classmethod

@@ -60,9 +60,20 @@ export function createScenePlayer(YT, target, { videoId, start, origin, onChange
   return {
     state,
     destroy,
-    seek(at = start) {
+    // play=false moves the position only (card selection must never start playback).
+    // seekTo() on a video that never started (unstarted/cued) begins playing, and a playing
+    // video would keep playing, so a silent move always re-cues the video at the new position.
+    seek(at = start, play = true) {
       if (!player || !state.ready || state.failed) return false
-      try { player.seekTo(Math.floor(at), true); player.playVideo(); return true } catch { return false }
+      try {
+        if (!play) {
+          player.cueVideoById({ videoId, startSeconds: Math.floor(at) })
+        } else {
+          player.seekTo(Math.floor(at), true)
+          if (play) player.playVideo()
+        }
+        return true
+      } catch { return false }
     },
   }
 }
