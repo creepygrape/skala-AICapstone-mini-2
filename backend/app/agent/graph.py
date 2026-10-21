@@ -12,11 +12,12 @@ from langgraph.graph import END, START, StateGraph
 from langsmith import tracing_context
 
 from backend.app.schemas import ContextReply, SceneResult, SearchReply, SearchRequest, SearchResponse
-from backend.app.services.search import SearchFailure, call_tool, ground_candidates
+from backend.app.services.search import (SearchFailure, call_tool, evidence_key,
+                                         ground_candidates, timing_warning)
 from backend.app.services.video_catalog import ROOT
-from backend.app.agent.telemetry import publish_summary
 
 MAX_REPLAN_ROUNDS = 2
+MIN_REPLAN_BUDGET_SECONDS = 25
 logger = logging.getLogger('wish_finder.agent')
 
 
@@ -27,7 +28,6 @@ class FinderState(TypedDict, total=False):
     query: str
     queries: list[str]
     attempt: int
-    search_attempts: int
     reply: SearchReply
     grounded: list[SceneResult]
     contexts: dict[str, ContextReply]
@@ -36,6 +36,10 @@ class FinderState(TypedDict, total=False):
     verdicts: dict[str, str]
     warnings: list[str]
     stop_replan: bool
+    can_replan: bool
+    deadline: float
+    round_all_rejected: bool
+    timing: dict[str, str]
     response: SearchResponse
 
 
@@ -45,15 +49,22 @@ class RunStats:
         self.llm_calls = 0
         self.search_attempts = 0
         self.stages = []
+        self.latest_grounded = []
+        self.best_uncertain = []
+        self.timing = {}
+        self.intent = None
 
 
 class FinderAgent:
     """Compile once per lifespan; dependencies are reused, State stays per request."""
     def __init__(self, session, metadata, model, *, mode='hybrid',
-                 tool_call=call_tool, timeout=60, log_path=None):
+                 tool_call=call_tool, timeout=60, log_path=None, telemetry=None,
+                 min_replan_budget=MIN_REPLAN_BUDGET_SECONDS):
         self.session, self.metadata, self.model = session, metadata, model
         self.mode, self.tool_call, self.timeout = mode, tool_call, timeout
         self.log_path = Path(log_path) if log_path else ROOT/'logs/agent.jsonl'
+        self.telemetry = telemetry
+        self.min_replan_budget = min_replan_budget
         graph = StateGraph(FinderState)
         for name in ['router','search','context','verification','replan','finalize']:
             graph.add_node(name, self._node(name))
@@ -92,6 +103,7 @@ class FinderAgent:
 
     async def _router(self, state, stats):
         route = await self._llm(stats,'route',state['user_query'])
+        stats.intent = route.intent
         query = SearchRequest(query=route.search_query).query
         return {'intent':route.intent,'query':query,'queries':[query]}
 
@@ -99,54 +111,66 @@ class FinderAgent:
         stats.search_attempts += 1
         reply = await self._tool(stats,'search_transcripts',
             {'query':state['query'],'mode':self.mode,'top_k':3},SearchReply)
-        return {'reply':reply,'search_attempts':stats.search_attempts}
+        return {'reply':reply}
 
     async def _context(self, state, stats):
         async def counted(name, arguments, schema):
             return await self._tool(stats,name,arguments,schema)
-        results, warnings, _, contexts = await ground_candidates(state['reply'],self.metadata,counted)
-        # Timing warnings are reconstructed from semantic survivors at Finalize.
-        rejected = 'evidence_rejected' in warnings
-        old = state['warnings']
-        return {'grounded':results,'contexts':contexts,
-                'warnings':list(dict.fromkeys([*old,*(['evidence_rejected'] if rejected else [])]))}
-
-    @staticmethod
-    def _id(result):
-        return f'{result.video_id}:{result.cue_ids[0]}'
+        results, _, timing, contexts = await ground_candidates(state['reply'],self.metadata,counted)
+        stats.latest_grounded = results
+        stats.timing.update(timing)
+        return {'grounded':results,'contexts':contexts,'timing':{**state.get('timing',{}),**timing},
+                'round_all_rejected':bool(state['reply'].candidates) and not results}
 
     async def _verification(self, state, stats):
         # Do not send invalid/ungrounded candidates to the semantic model.
         if not state['grounded']:
-            return {'verdicts':{},'relevant':[],'uncertain':state.get('uncertain',[])}
+            can_replan = (state['attempt'] < MAX_REPLAN_ROUNDS and
+                          state['deadline']-time.monotonic() >= self.min_replan_budget)
+            warnings = list(state['warnings'])
+            if state['attempt'] < MAX_REPLAN_ROUNDS and not can_replan:
+                warnings.append('replan_budget_exhausted')
+            return {'verdicts':{},'relevant':[],'uncertain':state.get('uncertain',[]),
+                    'can_replan':can_replan,'warnings':list(dict.fromkeys(warnings))}
         evidence = []
         for r in state['grounded']:
-            context = state['contexts'][self._id(r)]
-            evidence.append({'evidence_id':self._id(r),'quote':r.evidence_text,
+            context = state['contexts'][evidence_key(r)]
+            evidence.append({'evidence_id':evidence_key(r),'quote':r.evidence_text,
                 'caption_type':r.evidence_type,
                 'context':[{'cue_id':c.cue_id,'text':c.original_text} for c in context.cues]})
         decision = await self._llm(stats,'verify',state['user_query'],evidence)
-        expected = {self._id(r) for r in state['grounded']}
+        expected = {evidence_key(r) for r in state['grounded']}
         ids = [j.evidence_id for j in decision.judgments]
         if len(ids)!=len(set(ids)) or set(ids)!=expected:
             raise SearchFailure('model_invalid_evidence_ids')
         verdicts = {j.evidence_id:j.verdict for j in decision.judgments}
-        uncertain = {self._id(r):r for r in state.get('uncertain',[])}
+        uncertain = {evidence_key(r):r for r in state.get('uncertain',[])}
         for r in state['grounded']:
-            if verdicts[self._id(r)]=='uncertain':
-                uncertain[self._id(r)] = r
+            if verdicts[evidence_key(r)]=='uncertain':
+                uncertain[evidence_key(r)] = r
             else:
-                uncertain.pop(self._id(r),None)
+                uncertain.pop(evidence_key(r),None)
+        relevant = [r for r in state['grounded'] if verdicts[evidence_key(r)]=='relevant']
+        uncertain_results = list(uncertain.values())[:3]
+        stats.best_uncertain = uncertain_results
+        can_replan = (not relevant and state['attempt'] < MAX_REPLAN_ROUNDS and
+                      state['deadline']-time.monotonic() >= self.min_replan_budget)
+        warnings = list(state['warnings'])
+        if not relevant and state['attempt'] < MAX_REPLAN_ROUNDS and not can_replan:
+            warnings.append('replan_budget_exhausted')
         return {'verdicts':verdicts,
-                'relevant':[r for r in state['grounded'] if verdicts[self._id(r)]=='relevant'],
-                'uncertain':list(uncertain.values())[:3]}
+                'relevant':relevant,'uncertain':uncertain_results,
+                'can_replan':can_replan,'warnings':list(dict.fromkeys(warnings))}
 
     def _after_verification(self, state):
-        return 'finalize' if state['relevant'] or state['attempt']>=MAX_REPLAN_ROUNDS else 'replan'
+        return 'replan' if state.get('can_replan') else 'finalize'
 
     async def _replan(self, state, stats):
         query = await self._llm(stats,'rewrite',state['user_query'],state['queries'],state['verdicts'])
         query = SearchRequest(query=query).query
+        if state['deadline']-time.monotonic() < self.min_replan_budget:
+            return {'stop_replan':True,'warnings':list(dict.fromkeys(
+                [*state['warnings'],'replan_budget_exhausted']))}
         if query.casefold() in {x.casefold() for x in state['queries']}:
             return {'stop_replan':True,'warnings':[*state['warnings'],'replan_query_unchanged']}
         return {'query':query,'queries':[*state['queries'],query],'attempt':state['attempt']+1}
@@ -159,7 +183,9 @@ class FinderAgent:
         else:
             results = state.get('relevant',[]) or state.get('uncertain',[])
             status = ('found' if state.get('relevant') else 'ambiguous') if results else (
-                'unsupported' if 'evidence_rejected' in warnings else 'not_found')
+                'unsupported' if state.get('round_all_rejected') else 'not_found')
+            if state.get('round_all_rejected'):
+                warnings.append('evidence_rejected')
             if status=='ambiguous':
                 warnings.append('semantic_uncertain')
         if state['intent']=='speaker_query':
@@ -171,7 +197,8 @@ class FinderAgent:
             if state['intent']=='speaker_query':
                 explanation += ' 자막만으로 화자를 확인할 수 없습니다.'
             safe_results.append(r.model_copy(update={'explanation_ko':explanation}))
-            warning = 'video_timing_sampled' if self.metadata[r.video_id].timing_verified else 'video_timing_unverified'
+            warning = timing_warning(state.get('timing',{}).get(r.video_id,
+                'sampled' if self.metadata[r.video_id].timing_verified else 'unverified'))
             if warning not in warnings:
                 warnings.append(warning)
         # Every result remains unknown even for scene questions.
@@ -180,6 +207,41 @@ class FinderAgent:
         response = SearchResponse(request_id=state['request_id'],status=status,
             search_attempts=stats.search_attempts,results=safe_results,warnings=warnings)
         return {'response':response}
+
+    def _fallback(self, request_id, stats, warning, *, ambiguous=False):
+        results = stats.best_uncertain if ambiguous else stats.latest_grounded
+        if not results:
+            return None
+        warnings = [warning]
+        status = 'ambiguous' if ambiguous else 'partial'
+        if ambiguous:
+            warnings.append('semantic_uncertain')
+        else:
+            warnings.append('semantic_verification_skipped')
+        if stats.intent == 'speaker_query' or results:
+            warnings.append('speaker_unknown')
+        safe = []
+        for result in results[:3]:
+            explanation = ('관련 가능성이 있지만 장면 일치를 확정할 수 없습니다.' if ambiguous else
+                           '원문은 확인했지만 의미 검증 모델 오류로 장면 일치를 확정하지 못했습니다.')
+            if stats.intent == 'speaker_query':
+                explanation += ' 자막만으로 화자를 확인할 수 없습니다.'
+            safe.append(result.model_copy(update={'explanation_ko':explanation}))
+            warnings.append(timing_warning(stats.timing[result.video_id]))
+        return SearchResponse(request_id=request_id,status=status,search_attempts=stats.search_attempts,
+                              results=safe,warnings=list(dict.fromkeys(warnings)))
+
+    def _emit(self, request_id, stats, started, state, error):
+        record = self._telemetry(request_id,stats,started,state,error)
+        try:
+            self.log_path.parent.mkdir(parents=True,exist_ok=True)
+            with self.log_path.open('a',encoding='utf-8') as stream:
+                stream.write(json.dumps(record,ensure_ascii=False)+'\n')
+        except OSError:
+            logger.warning('agent_log_failed request_id=%s',request_id)
+        if self.telemetry is not None:
+            self.telemetry.submit(record)
+        return record
 
     async def run(self, query, *, request_id=None):
         query = SearchRequest(query=query).query
@@ -193,33 +255,40 @@ class FinderAgent:
             with tracing_context(enabled=False):
                 async with asyncio.timeout(self.timeout):
                     state = await self.graph.ainvoke({'request_id':request_id,'user_query':query,
-                        'attempt':0,'search_attempts':0,'warnings':[]},
+                        'attempt':0,'warnings':[],'timing':{},'deadline':started+self.timeout},
                         config={'configurable':{'stats':stats},'recursion_limit':24})
-            return state['response'], self._telemetry(request_id,stats,started,state,None)
+            record = self._emit(request_id,stats,started,state,None)
+            return state['response'], record
         except SearchFailure as exc:
             error = exc.code
+            if exc.code.startswith('model_'):
+                response = self._fallback(request_id,stats,'semantic_model_error',
+                                          ambiguous=bool(stats.best_uncertain))
+                if response is not None:
+                    state = {'intent':stats.intent,'response':response}
+                    record = self._emit(request_id,stats,started,state,exc.code)
+                    return response, record
             exc.tool_calls, exc.search_attempts = stats.tool_calls, stats.search_attempts
+            self._emit(request_id,stats,started,state,error)
             raise
         except TimeoutError as exc:
             error = 'request_timeout'
+            response = self._fallback(request_id,stats,'replan_budget_exhausted',
+                                      ambiguous=bool(stats.best_uncertain))
+            if response is not None:
+                state = {'intent':stats.intent,'response':response}
+                record = self._emit(request_id,stats,started,state,error)
+                return response, record
+            self._emit(request_id,stats,started,state,error)
             raise SearchFailure(error,tool_calls=stats.tool_calls,search_attempts=stats.search_attempts) from exc
         except asyncio.CancelledError:
             error = 'cancelled'
+            self._emit(request_id,stats,started,state,error)
             raise
         except Exception as exc:
             error = 'agent_failure'
+            self._emit(request_id,stats,started,state,error)
             raise SearchFailure(error,tool_calls=stats.tool_calls,search_attempts=stats.search_attempts) from exc
-        finally:
-            record = self._telemetry(request_id,stats,started,state,error)
-            try:
-                self.log_path.parent.mkdir(parents=True,exist_ok=True)
-                with self.log_path.open('a',encoding='utf-8') as stream:
-                    stream.write(json.dumps(record,ensure_ascii=False)+'\n')
-            except OSError:
-                logger.warning('agent_log_failed request_id=%s',request_id)
-            # Explicit summary reporting avoids auto-tracing raw graph State.
-            # A failed external reporter must never break a successful request.
-            await asyncio.to_thread(publish_summary,record)
 
     @staticmethod
     def _telemetry(request_id, stats, started, state, error):

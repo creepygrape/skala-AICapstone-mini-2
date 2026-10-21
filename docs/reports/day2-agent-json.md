@@ -78,3 +78,13 @@ git diff --check
 - context는 기존 20초 창을 유지한다. 선택 cue가 밖이면 제외하므로 긴 청크의 recall 손실 가능성이 남는다.
 - 한국어 설명은 안전한 상태 안내이며 자유 장면 요약은 제공하지 않는다. 상세 맥락 요약은 인용·화자 안전성을 유지하는 방식으로 후속 검토한다.
 - 모델 다운로드·신규 의존성·유료 API·자막 재수집·원본 공개는 하지 않았다. commit/push는 변경 제시 후 별도 승인한다.
+
+## PR #3 리뷰 반영
+
+필수 2건·권장 3건·개선 2건을 모두 반영했다. 재검색 전후 시간 예산 확인과 timeout 근거 보존, 라운드별 원문 탈락 상태, 비동기 lifespan LangSmith 큐, 모델/MCP 오류 메시지 분리와 의미 모델 fallback, 태그 없는 Ollama 이름의 `:latest` 처리, 공통 근거 ID·시각 경고 함수, 단일 telemetry 레코드를 적용했다.
+
+의미 모델 fallback의 `partial`은 C 성공이 아니다. 이전 uncertain 근거가 있으면 `ambiguous`이며, 근거가 없거나 Router가 실패하면 안전한 503이다. 마지막 라운드가 정상 0건이면 과거 `evidence_rejected`와 관계없이 `not_found`다. 모든 후보가 원문 검증에서 탈락한 마지막 라운드만 `unsupported`다.
+
+수정 후 백엔드 76 passed, 프런트엔드 2 passed, 빌드와 `git diff --check`가 통과했다. 리뷰 재현 테스트에는 시간 예산 종료/전체 timeout 근거 보존, 이전 라운드 탈락 경고 비누출, 모델 오류 fallback·구분 메시지, 태그 없는 모델 이름, 느린 추적 전송의 응답 비차단·Client 재사용, 반환/로컬 로그 telemetry 동일성을 포함한다.
+
+수정 코드로 실제 로컬 API를 재시작한 뒤 마니또 질문이 1라운드 `found`, 189초 링크, `speaker=null`, `video_timing_sampled`·`speaker_unknown` 경고를 반환하는 것도 다시 확인했다.

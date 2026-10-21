@@ -49,6 +49,15 @@ class SearchExecution:
     video_timing: dict[str, str]
 
 
+def evidence_key(result):
+    """Stable cue-level key shared by grounding and semantic verification."""
+    return f'{result.video_id}:{result.cue_ids[0]}'
+
+
+def timing_warning(status):
+    return 'video_timing_sampled' if status == 'sampled' else 'video_timing_unverified'
+
+
 async def ground_candidates(reply, metadata, counted):
     """Shared MCP context/source grounding for baselines and Graph nodes.
 
@@ -76,10 +85,10 @@ async def ground_candidates(reply, metadata, counted):
                 warnings.append('evidence_rejected')
             continue
         results.append(result)
-        key = f'{result.video_id}:{result.cue_ids[0]}'
+        key = evidence_key(result)
         contexts[key] = context
         timing[result.video_id] = 'sampled' if video.timing_verified else 'unverified'
-        warning = 'video_timing_sampled' if video.timing_verified else 'video_timing_unverified'
+        warning = timing_warning(timing[result.video_id])
         if warning not in warnings:
             warnings.append(warning)
     return results, warnings, timing, contexts

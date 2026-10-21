@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 
 from fastapi.testclient import TestClient
 import httpx
@@ -9,6 +10,7 @@ import pytest
 
 from backend.app.agent.graph import FinderAgent
 from backend.app.agent.model import OllamaModel, Route, Verification, Judgment
+from backend.app.agent.telemetry import TelemetryPublisher
 from backend.app.schemas import MetadataReply
 from backend.app.services.search import SearchFailure
 from backend.tests.test_search_service import FakeSession
@@ -122,8 +124,11 @@ def test_invalid_model_evidence_ids_are_not_accepted(tmp_path):
         return Verification(judgments=[Judgment(evidence_id='invented',verdict='relevant')])
     model.verify=invalid
     agent,_=make_agent(tmp_path,model)
-    with pytest.raises(SearchFailure,match='model_invalid_evidence_ids'):
-        asyncio.run(agent.run('장면'))
+    response,stats=asyncio.run(agent.run('장면'))
+    assert response.status=='partial'
+    assert 'semantic_model_error' in response.warnings
+    assert 'semantic_verification_skipped' in response.warnings
+    assert stats['error']=='model_invalid_evidence_ids'
     assert model.rewrites==0
 
 
@@ -192,7 +197,7 @@ def test_agent_json_api_with_real_stdio_and_lifespan_cleanup(monkeypatch,tmp_pat
     assert model.closed and main.app.state.agent is None
 
 
-def test_model_failure_in_api_is_503_and_releases_busy(monkeypatch,tmp_path):
+def test_model_failure_after_grounding_returns_non_c_partial_and_releases_busy(monkeypatch,tmp_path):
     import backend.app.main as main
     model=ScriptedModel()
     async def fail(*args): raise SearchFailure('model_timeout')
@@ -204,9 +209,10 @@ def test_model_failure_in_api_is_503_and_releases_busy(monkeypatch,tmp_path):
     with TestClient(main.app) as client:
         main.app.state.agent.log_path=tmp_path/'agent.jsonl'
         response=client.post('/api/search',json={'query':'RIKU'})
-        assert response.status_code==503
-        assert response.json()['detail']['code']=='model_timeout'
-        assert 'results' not in response.json()
+        assert response.status_code==200
+        assert response.json()['status']=='partial'
+        assert 'semantic_model_error' in response.json()['warnings']
+        assert response.json()['results']
         assert not main.app.state.busy and model.rewrites==0
     assert model.closed
 
@@ -223,6 +229,25 @@ def test_model_startup_failure_closes_http_client(monkeypatch):
     with pytest.raises(Exception):
         with TestClient(main.app): pass
     assert model.closed and main.app.state.agent is None
+
+
+def test_model_router_failure_has_distinct_api_message(monkeypatch,tmp_path):
+    import backend.app.main as main
+    model=ScriptedModel()
+    async def fail(*args): raise SearchFailure('model_unavailable')
+    model.route=fail
+    monkeypatch.setenv('WISH_AGENT_ENABLED','1')
+    monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
+    monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
+    monkeypatch.setattr(main,'OllamaModel',lambda *args:model)
+    with TestClient(main.app) as client:
+        main.app.state.agent.log_path=tmp_path/'agent.jsonl'
+        response=client.post('/api/search',json={'query':'RIKU'})
+        assert response.status_code==503
+        detail=response.json()['detail']
+        assert detail['code']=='model_unavailable'
+        assert '의미 검증 모델' in detail['message']
+        assert not main.app.state.busy
 
 
 def test_langsmith_is_explicit_opt_in_and_metadata_only(monkeypatch):
@@ -242,3 +267,91 @@ def test_langsmith_is_explicit_opt_in_and_metadata_only(monkeypatch):
     telemetry.publish_summary(record)
     assert records[0]['inputs']=={'source':'metadata_only'}
     assert records[0]['outputs']==record
+
+
+def test_replan_budget_preserves_uncertain_evidence(tmp_path):
+    model=ScriptedModel(('uncertain',))
+    agent,session=make_agent(tmp_path,model,min_replan_budget=10_000)
+    response,stats=asyncio.run(agent.run('장면'))
+    assert response.status=='ambiguous' and response.results
+    assert response.search_attempts==1 and len(session.queries)==1
+    assert model.rewrites==0
+    assert 'replan_budget_exhausted' in response.warnings
+    assert stats==json.loads((tmp_path/'agent.jsonl').read_text())
+
+
+def test_total_timeout_preserves_previous_uncertain_evidence(tmp_path):
+    model=ScriptedModel(('uncertain',))
+    original=model.verify
+    async def verify(query,evidence):
+        if model.verifications:
+            await asyncio.sleep(.2)
+        return await original(query,evidence)
+    model.verify=verify
+    agent,_=make_agent(tmp_path,model,timeout=.05,min_replan_budget=0)
+    response,stats=asyncio.run(agent.run('장면'))
+    assert response.status=='ambiguous' and response.results
+    assert response.search_attempts==2
+    assert 'replan_budget_exhausted' in response.warnings
+    assert stats['error']=='request_timeout'
+
+
+def test_previous_rejection_does_not_change_later_not_found_or_leak_warning(tmp_path):
+    agent,session=make_agent(tmp_path,ScriptedModel(('irrelevant',)))
+    original=agent.tool_call
+    searches=0
+    async def changing(session_,name,args,schema):
+        nonlocal searches
+        result=await original(session_,name,args,schema)
+        if name=='search_transcripts':
+            searches+=1
+            if searches==1:
+                bad=result.candidates[0].model_copy(deep=True)
+                bad.selected_cue_id='invalid'
+                result.candidates=[bad,*result.candidates[1:]]
+            else:
+                result.candidates=[]
+        return result
+    agent.tool_call=changing
+    response,_=asyncio.run(agent.run('장면'))
+    assert response.status=='not_found'
+    assert 'evidence_rejected' not in response.warnings
+    assert len(session.queries)==3
+
+
+def test_tagless_ollama_name_resolves_to_latest():
+    async def run():
+        model=OllamaModel('qwen3')
+        await model.client.aclose()
+        model.client=httpx.AsyncClient(transport=httpx.MockTransport(lambda request:
+            httpx.Response(200,json={'models':[{'name':'qwen3:latest','model':'qwen3:latest'}]})),
+            base_url='http://local')
+        try:
+            await model.ready()
+            assert model.model=='qwen3:latest'
+        finally: await model.close()
+    asyncio.run(run())
+
+
+def test_telemetry_queue_does_not_delay_request_and_reuses_client(monkeypatch,tmp_path):
+    import backend.app.agent.telemetry as telemetry
+    clients=[];published=[]
+    class Client:
+        def __init__(self,**kwargs): clients.append(self)
+        def close(self): pass
+    def slow(record,client=None):
+        time.sleep(.1);published.append((record,client))
+    monkeypatch.setenv('WISH_LANGSMITH_ENABLED','1')
+    monkeypatch.setenv('LANGSMITH_API_KEY','test')
+    monkeypatch.setattr(telemetry,'Client',Client)
+    monkeypatch.setattr(telemetry,'publish_summary',slow)
+    async def run():
+        publisher=await TelemetryPublisher().start()
+        agent,_=make_agent(tmp_path,ScriptedModel(),telemetry=publisher)
+        started=time.monotonic()
+        await agent.run('장면')
+        elapsed=time.monotonic()-started
+        assert elapsed < .08
+        await publisher.close()
+        assert len(clients)==1 and len(published)==1 and published[0][1] is clients[0]
+    asyncio.run(run())

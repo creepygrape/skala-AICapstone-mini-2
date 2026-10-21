@@ -15,6 +15,7 @@ from backend.app.services.search import SearchFailure, call_tool as call, search
 from backend.app.services.video_catalog import load_videos
 from backend.app.agent.graph import FinderAgent
 from backend.app.agent.model import OllamaModel
+from backend.app.agent.telemetry import TelemetryPublisher
 
 logger = logging.getLogger("wish_finder")
 
@@ -27,6 +28,7 @@ async def lifespan(app):
     app.state.videos = {}
     app.state.agent = None
     model = None
+    telemetry = None
     env = {key:value for key,value in os.environ.items() if key.startswith('WISH_')}
     env.update(HF_HUB_OFFLINE="1",TRANSFORMERS_OFFLINE="1",TOKENIZERS_PARALLELISM="false")
     # Enter/exit transport and session in this lifespan task, not a child wait_for task.
@@ -41,12 +43,16 @@ async def lifespan(app):
             if os.getenv('WISH_AGENT_ENABLED') == '1':
                 model = OllamaModel(os.getenv('WISH_LLM_MODEL','qwen3:8b'))
                 await model.ready()
+                telemetry = await TelemetryPublisher().start()
                 app.state.agent = FinderAgent(session,app.state.videos,model,
-                    mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid',tool_call=call)
+                    mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid',
+                    tool_call=call,telemetry=telemetry)
             yield
         finally:
             if model is not None:
                 await model.close()
+            if telemetry is not None:
+                await telemetry.close()
             app.state.agent = None
             app.state.session = None
             app.state.videos = {}
@@ -91,8 +97,12 @@ async def search(request: SearchRequest):
         return execution.response
     except SearchFailure as exc:
         logger.warning('search_failed request_id=%s code=%s', request_id, exc.code)
-        message = ('이전 검색을 마무리 중입니다. 잠시 후 다시 시도해 주세요.'
-                   if exc.code == 'search_busy' else '검색 도구에 오류가 발생했습니다. 다시 시도해 주세요.')
+        if exc.code == 'search_busy':
+            message = '이전 검색을 마무리 중입니다. 잠시 후 다시 시도해 주세요.'
+        elif exc.code.startswith('model_') or exc.code == 'agent_failure':
+            message = '의미 검증 모델에 오류가 발생했습니다. 다시 시도해 주세요.'
+        else:
+            message = '검색 도구에 오류가 발생했습니다. 다시 시도해 주세요.'
         raise HTTPException(503,detail={'request_id':request_id,'message':message,'code':exc.code}) from None
     finally:
         app.state.busy=False

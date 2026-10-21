@@ -51,8 +51,12 @@ class OllamaModel:
         try:
             response = await self.client.get('/api/tags')
             response.raise_for_status()
-            if self.model not in {x['name'] for x in response.json()['models']}:
+            models = response.json()['models']
+            requested = self.model if ':' in self.model else f'{self.model}:latest'
+            installed = {value for item in models for value in (item.get('name'),item.get('model')) if value}
+            if requested not in installed:
                 raise SearchFailure('model_not_installed')
+            self.model = requested
         except (httpx.HTTPError, ValueError, KeyError) as exc:
             raise SearchFailure('model_unavailable') from exc
 
