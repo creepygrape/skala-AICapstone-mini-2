@@ -47,6 +47,9 @@ OpenAI 모드에서는 다음만 OpenAI API로 전송한다.
 - **측정 기록**: 결함이 있던 실행은 비공개 결과로 보관하고, 수정 후 같은 gold를 새 경로로 다시 측정한다. 수정 전 수치는 제출 수치로 쓰지 않는다.
 - **검증**: `test_llm_backends.py`가 빈 검색어 허용/거부 규칙, `unsupported` 응답이 오류가 아닌 `unsupported`로 끝나는지, 검색하는 의도의 빈 검색어는 여전히 `model_invalid_response`인지, 자리표시자 동작을 확인한다.
 
+## 실측 검증 (2026-10-21)
+OpenAI 백엔드로 gold 20문항(A,B,C,C-ko)을 실제 측정했다. 수정 후 실행(v2)은 완료·오류 0건이며 C 장면 Success@1 16/18, unsupported 2/2, 근거 없는 화자 단정 0건, LLM 98회·입력 56,941 / 출력 4,125 토큰이다. 같은 설정의 v1과 장면 결과가 1문항 달라 비결정성이 확인됐다. 상세와 한계는 [reports/day2-eval-openai.md](../reports/day2-eval-openai.md). LangSmith 전송은 켜서 실행했으나 화면 확인은 사용자 몫이다.
+
 ## 대안과 트레이드오프
 - **openai SDK**: 편하지만 신규 의존성이 생긴다. httpx로 충분하고 Ollama와 같은 오류 처리 방식을 유지할 수 있다.
 - **JSON 모드**(`json_object`, 참고 프로젝트 방식): 유효한 JSON만 보장하고 스키마는 강제하지 않는다. 우리는 `extra='forbid'` 계약이 핵심이라 strict json_schema를 택했다.

@@ -163,13 +163,13 @@ flowchart LR
 
 ### 테스트 (실측 개수)
 
-- **backend pytest 126개**
+- **backend pytest 129개**
 
   | 파일 | 개수 | 대상 |
   |---|---|---|
   | `test_agent.py` | 36 | 그래프 경로, 상한, 폴백, `stage_ms`, 진단 trace |
   | `test_llm_backends.py` | 16 | Ollama/OpenAI 교체 계약(모의 HTTP, 과금 없음), LangSmith 전송 내용(가짜 세션) |
-  | `test_agent_evaluation.py` | 13 | C 평가 경로 |
+  | `test_agent_evaluation.py` | 16 | C 평가 경로 |
   | `test_sources.py` | 13 | SRT, 원문 경계 |
   | `test_sse.py` | 12 | 이벤트 순서, 취소, 정리 |
   | `test_evaluation_safety.py` | 11 | gold 승인, 공개 범위 |

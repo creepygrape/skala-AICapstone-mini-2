@@ -193,3 +193,59 @@ def test_aggregate_counts_only_found_for_c_and_flags_confident_wrong():
     c, b = rows[('c', 'C')], rows[('c', 'B')]
     assert (c['success_at_1'], c['raw_success_at_1'], c['confident_wrong'], c['scene_questions']) == (1, 2, 1, 3)
     assert b['success_at_1'] == 1  # A/B partial results remain search hits
+
+
+def test_llm_budget_guard_stops_before_a_question_could_exceed_the_cap():
+    from eval.run_eval import llm_budget_exhausted
+    assert llm_budget_exhausted(1000, None) is False
+    assert llm_budget_exhausted(0, 6) is False        # a worst-case question (6 calls) still fits
+    assert llm_budget_exhausted(1, 6) is True
+    assert llm_budget_exhausted(144, 150) is False and llm_budget_exhausted(145, 150) is True
+
+
+def test_probe_reports_tokens_spent_per_question_and_summary_totals_them(tmp_path):
+    class Counting(ScriptedModel):
+        usage = {'calls': 0, 'tokens_in': 0, 'tokens_out': 0}
+        async def route(self, query):
+            self.usage.update(calls=self.usage['calls']+1, tokens_in=self.usage['tokens_in']+10,
+                              tokens_out=self.usage['tokens_out']+2)
+            return await super().route(query)
+        async def verify(self, query, evidence):
+            self.usage.update(calls=self.usage['calls']+1, tokens_in=self.usage['tokens_in']+30,
+                              tokens_out=self.usage['tokens_out']+5)
+            return await super().verify(query, evidence)
+    model = Counting(('relevant',))
+    agent, _ = make_agent(tmp_path, RouteProbe(model))
+    probe = agent.model
+    q = question()
+    first = asyncio.run(evaluate_agent_question(agent, probe, q, condition='c', system='C'))
+    second = asyncio.run(evaluate_agent_question(agent, probe, q, condition='c', system='C'))
+    for record in (first, second):  # per-question delta, not cumulative
+        assert (record['llm_tokens_in'], record['llm_tokens_out']) == (40, 7)
+    from eval.aggregate import aggregate
+    row = aggregate([first, second])[('c', 'C')]
+    assert (row['llm_tokens_in'], row['llm_tokens_out']) == (80, 14)
+
+
+def test_langsmith_for_eval_is_explicit_and_refuses_to_run_untraced(monkeypatch):
+    import backend.app.agent.telemetry as telemetry
+    from eval.run_eval import start_langsmith
+    class Client:
+        def __init__(self, **kwargs): pass
+        def close(self): pass
+    monkeypatch.setattr(telemetry, 'Client', Client)
+    monkeypatch.delenv('LANGSMITH_PROJECT', raising=False)
+    monkeypatch.delenv('WISH_LANGSMITH_ENABLED', raising=False)
+    monkeypatch.delenv('LANGSMITH_API_KEY', raising=False)
+    assert asyncio.run(start_langsmith(False)) is None          # off unless asked
+    with pytest.raises(ValueError):                                # asked but not configured
+        asyncio.run(start_langsmith(True))
+    monkeypatch.setenv('WISH_LANGSMITH_ENABLED', '1')
+    monkeypatch.setenv('LANGSMITH_API_KEY', 'synthetic-test-key')
+    async def run():
+        publisher = await start_langsmith(True)
+        assert publisher.enabled and publisher.client is not None
+        await publisher.close()
+    asyncio.run(run())
+    import os
+    assert os.environ.pop('LANGSMITH_PROJECT') == 'wish-finder-eval'  # separate from web traffic

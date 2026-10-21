@@ -18,10 +18,13 @@ def aggregate(records):
         m = r.get('retrieval_metrics') if r.get('retrieval_metrics') is not None else r['metrics']
         row = rows.setdefault((r['condition'], r['system']), {
             'scene_questions':0, 'success_at_1':0, 'hit_at_3':0, 'raw_success_at_1':0, 'raw_hit_at_3':0,
-            'confident_wrong':0, 'status':{}, 'tool_calls':0, 'llm_calls':0, 'fallback':0})
+            'confident_wrong':0, 'status':{}, 'tool_calls':0, 'llm_calls':0, 'fallback':0,
+            'llm_tokens_in':0, 'llm_tokens_out':0})
         row['status'][r['status']] = row['status'].get(r['status'], 0) + 1
         row['tool_calls'] += r.get('tool_calls', 0)
         row['llm_calls'] += r.get('llm_calls', 0)
+        row['llm_tokens_in'] += r.get('llm_tokens_in', 0)
+        row['llm_tokens_out'] += r.get('llm_tokens_out', 0)
         row['fallback'] += bool(r.get('fallback'))
         if m is None:
             continue
