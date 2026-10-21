@@ -10,6 +10,7 @@ function fakeYT() {
     playVideo() { calls.push(['playVideo']) }
     cueVideoById(options) { calls.push(['cue', options]) }
     destroy() { calls.push(['destroy']) }
+    pauseVideo() { if (this.failPause) throw new Error('detached'); calls.push(['pauseVideo']) }
   }
   return { YT: { Player }, calls, instances }
 }
@@ -76,5 +77,38 @@ describe('createScenePlayer', () => {
     fake.instances[0].events.onError({ data: 150 })
     fake.instances[0].events.onStateChange({ data: 1 })
     expect(scene.state.blocked).toBe(true)
+  })
+})
+
+describe('pause (panel collapsed)', () => {
+  it('pauses only a ready, healthy player', () => {
+    const fake = fakeYT()
+    const scene = make(fake)
+    expect(scene.pause()).toBe(false)               // not ready yet
+    fake.instances[0].events.onReady()
+    expect(scene.pause()).toBe(true)
+    expect(fake.calls).toEqual([['pauseVideo']])
+    fake.calls.length = 0
+    fake.instances[0].events.onError({ data: 5 })
+    expect(scene.pause()).toBe(false)               // failed player: caller does nothing
+    expect(fake.calls).toEqual([])
+  })
+
+  it('never throws when the iframe is already gone', () => {
+    const fake = fakeYT()
+    const scene = make(fake)
+    fake.instances[0].events.onReady()
+    fake.instances[0].failPause = true
+    expect(scene.pause()).toBe(false)
+  })
+
+  it('is a no-op after the player was destroyed', () => {
+    const fake = fakeYT()
+    const scene = make(fake)
+    fake.instances[0].events.onReady()
+    scene.destroy()
+    fake.calls.length = 0
+    expect(scene.pause()).toBe(false)
+    expect(fake.calls).toEqual([])
   })
 })

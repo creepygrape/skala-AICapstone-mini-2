@@ -75,5 +75,10 @@ export function createScenePlayer(YT, target, { videoId, start, origin, onChange
         return true
       } catch { return false }
     },
+    // Stops playback where it is (panel collapsed). Never throws; false when there is nothing to pause.
+    pause() {
+      if (!player || !state.ready || state.failed) return false
+      try { player.pauseVideo(); return true } catch { return false }
+    },
   }
 }

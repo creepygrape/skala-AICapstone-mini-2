@@ -12,6 +12,7 @@ const props = defineProps({
   loading: Boolean,
   error: String,
   timingSampled: Boolean,
+  open: Boolean,       // slide-over open state (narrow screens); closing it must silence the video
 })
 defineEmits(['close'])
 const player = ref(null)
@@ -20,6 +21,9 @@ const player = ref(null)
 function playAt(seconds) {
   if (!player.value?.seek(seconds)) window.open(urlAt(props.item.url, seconds), '_blank', 'noopener,noreferrer')
 }
+// Collapsing the panel (✕, backdrop, switching conversation) leaves the iframe mounted off-screen,
+// so it would keep playing: pause it.
+watch(() => props.open, open => { if (!open) player.value?.pause() })
 // Same video, other card: move the existing player without starting playback.
 watch(() => props.item, (item, old) => {
   if (item && old && item.video_id === old.video_id) player.value?.seek(item.start_seconds, false)
