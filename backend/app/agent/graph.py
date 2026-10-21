@@ -28,6 +28,7 @@ class FinderState(TypedDict, total=False):
     user_query: str
     history: list[dict]
     exclude: list[str]
+    resolved_query: str
     intent: Literal['scene_search', 'speaker_query', 'unsupported', 'chat']
     query: str
     queries: list[str]
@@ -127,11 +128,11 @@ class FinderAgent:
                     stats.add_pending(name, time.monotonic()-started)
         return run
 
-    async def _llm(self, stats, method, *args):
+    async def _llm(self, stats, method, *args, **kwargs):
         stats.llm_calls += 1
         try:
             async with asyncio.timeout(20):
-                return await getattr(self.model,method)(*args)
+                return await getattr(self.model,method)(*args, **kwargs)
         except TimeoutError as exc:
             raise SearchFailure('model_timeout') from exc
 
@@ -148,8 +149,9 @@ class FinderAgent:
         stats.note('router', intent=route.intent, query=query)
         update = {'intent':route.intent,'query':query,'queries':[query]}
         if history and route.intent in {'scene_search','speaker_query'}:
-            # A follow-up is judged against its self-contained rewrite, not the bare "another one".
-            update['user_query'] = query
+            # The user's question and earlier turns stay immutable. The Router rewrite is only a
+            # search aid (and rewrite input); verification gets it as context, never as the criterion.
+            update['resolved_query'] = query
         return update
 
     async def _search(self, state, stats):
@@ -168,18 +170,27 @@ class FinderAgent:
     async def _context(self, state, stats):
         async def counted(name, arguments, schema):
             return await self._tool(stats,name,arguments,schema)
-        results, _, timing, contexts = await ground_candidates(state['reply'],self.metadata,counted)
+        reply = state['reply']
         exclude = set(state.get('exclude',[]))
-        shown = [r for r in results if evidence_key(r) in exclude]
+        shown = False
         if exclude:
-            # Already shown in this conversation: dropped, not a rejected/unsupported candidate.
+            # Drop already-shown scenes from the search response itself, so only the (at most
+            # 3) remaining candidates cost a get_scene_context call. Not a rejected candidate.
+            kept = [c for c in reply.candidates
+                    if f'{c.chunk.video_id}:{c.selected_cue_id}' not in exclude]
+            shown = len(kept) != len(reply.candidates)
+            reply = reply.model_copy(update={'candidates':kept[:3]})
+        results, _, timing, contexts = await ground_candidates(reply,self.metadata,counted)
+        if exclude:
+            # Safety net: grounding may resolve to a different cue key than selected_cue_id.
+            shown = shown or any(evidence_key(r) in exclude for r in results)
             results = [r for r in results if evidence_key(r) not in exclude][:3]
         stats.latest_grounded = results
         stats.timing.update(timing)
         stats.note('context', grounded=[evidence_key(r) for r in results],
-                   rejected=len(state['reply'].candidates)-len(results))
+                   rejected=len(reply.candidates)-len(results))
         return {'grounded':results,'contexts':contexts,'timing':{**state.get('timing',{}),**timing},
-                'round_all_rejected':bool(state['reply'].candidates) and not results and not shown}
+                'round_all_rejected':bool(reply.candidates) and not results and not shown}
 
     async def _verification(self, state, stats):
         # Do not send invalid/ungrounded candidates to the semantic model.
@@ -206,7 +217,9 @@ class FinderAgent:
                 evidence.append({'evidence_id':evidence_key(r),'quote':r.evidence_text,
                     'caption_type':r.evidence_type,
                     'context':[{'cue_id':c.cue_id,'text':c.original_text} for c in context.cues]})
-            decision = await self._llm(stats,'verify',state['user_query'],evidence)
+            extra = ({'history':state['history'],'resolved_query':state['resolved_query']}
+                     if state.get('resolved_query') else {})
+            decision = await self._llm(stats,'verify',state['user_query'],evidence,**extra)
             expected = {evidence_key(r) for r in new}
             ids = [j.evidence_id for j in decision.judgments]
             if len(ids)!=len(set(ids)) or set(ids)!=expected:
@@ -251,7 +264,8 @@ class FinderAgent:
         # Rejected wording is shown so the rewrite changes key nouns instead of paraphrasing.
         feedback = [{'verdict':state['verdicts'].get(evidence_key(r),'unknown'),'quote':r.evidence_text[:120]}
                     for r in state['grounded']]
-        query = await self._llm(stats,'rewrite',state['user_query'],state['queries'],feedback)
+        query = await self._llm(stats,'rewrite',state.get('resolved_query') or state['user_query'],
+                                state['queries'],feedback)
         query = SearchRequest(query=query).query
         stats.note('replan', previous=state['queries'], proposed=query)
         if state['deadline']-time.monotonic() < self.min_replan_budget:
@@ -379,7 +393,7 @@ class FinderAgent:
             with tracing_context(**self._tracing(request_id)):
                 async with asyncio.timeout(self.timeout):
                     state = await self.graph.ainvoke({'request_id':request_id,'user_query':query,
-                        'history':history or [],'exclude':exclude or [],'attempt':0,'warnings':[],'timing':{},'deadline':started+self.timeout},
+                        'history':history or [],'exclude':list(dict.fromkeys(exclude or [])),'attempt':0,'warnings':[],'timing':{},'deadline':started+self.timeout},
                         config={'configurable':{'stats':stats},'recursion_limit':24})
             record = self._emit(request_id,stats,started,state,None)
             return state['response'], record

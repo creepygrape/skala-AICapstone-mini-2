@@ -59,6 +59,20 @@ npm --prefix frontend run dev -- --port 5173
 
 브라우저에서 `http://localhost:5173/`에 접속합니다(`127.0.0.1`로 접속하면 일부 영상의 페이지 내 재생이 막힐 수 있습니다). 백엔드 lifespan이 실제 MCP 서버를 시작하고 종료합니다. MCP 서버만 따로 실행하려면 `.venv/bin/python -m backend.app.mcp.server`를 사용합니다(stdout은 프로토콜 전용).
 
+### Windows (PowerShell)
+
+`.sh` 스크립트 대신 같은 동작의 PowerShell 스크립트를 씁니다. 가상환경 Python은 `.venv\Scripts\python.exe`입니다.
+
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r backendequirements.txt
+npm --prefix frontend ci
+scriptsun_backend.ps1 openai      # 또는 ollama. openai는 과금 y/N 확인(-Yes로 생략)
+scriptsun_frontend.ps1            # 다른 터미널, http://localhost:5173/
+```
+
+Windows에는 SIGTERM이 없어 8000/5173 포트를 점유한 프로세스는 바로 강제 종료됩니다. 한국어 파일은 UTF-8로 읽도록 고정했습니다.
+
 ### Agent 실행 — LLM 백엔드 교체 (ADR-0008)
 
 `WISH_LLM_BACKEND` 하나로 LLM만 바뀌고 그래프·MCP·검색 코드는 그대로입니다. 개발은 로컬 Ollama, 시연·결과 제출은 OpenAI를 사용합니다. **8000 포트를 이미 쓰고 있는 프로세스는 스크립트가 먼저 종료합니다**(SIGTERM 후 필요하면 SIGKILL).

@@ -127,7 +127,7 @@ async def run(args):
     rewrite_path = project_path(args.rewrites) if args.rewrites else None
     rewrites = None
     if rewrite_path:
-        rewrite_data = json.loads(rewrite_path.read_text())
+        rewrite_data = json.loads(rewrite_path.read_text(encoding="utf-8"))
         items = rewrite_data['queries']
         if len(items)!=len(rows) or {x['id'] for x in items}!={r.id for r in rows}:
             raise ValueError('Frozen rewrite IDs must match dataset exactly once')

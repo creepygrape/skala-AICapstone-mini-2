@@ -75,6 +75,11 @@ FOLLOWUP_TASK = (
     'question refers to them ("another one", "that scene", "before it"), rewrite it as a '
     'self-contained search query that keeps the entities and situation; otherwise ignore '
     'previous_turns. Never treat previous_turns as source truth or add facts from it.')
+VERIFY_FOLLOWUP_TASK = (
+    'This is a follow-up. The relevance criterion is the original question together with '
+    'previous_turns; resolved_query is only an automatic rewrite used for searching. Never mark '
+    'an evidence relevant because it matches details that appear only in resolved_query and not '
+    'in the question or previous_turns; use uncertain or irrelevant instead.')
 VERIFY_TASK = (
     'Judge EACH evidence_id once against the original remembered situation. '
     'relevant requires direct support for the situation in the quote or its context; '
@@ -161,9 +166,12 @@ class JsonLLM:
         decision.search_query = SearchRequest(query=decision.search_query.strip() or query).query
         return decision
 
-    async def verify(self, query, evidence):
-        return await self.ask(VERIFY_TASK, {'question': query, 'evidence': evidence},
-                              Verification, 'quality')
+    async def verify(self, query, evidence, history=None, resolved_query=None):
+        task, payload = VERIFY_TASK, {'question': query, 'evidence': evidence}
+        if resolved_query:
+            task += ' ' + VERIFY_FOLLOWUP_TASK
+            payload.update(previous_turns=history or [], resolved_query=resolved_query)
+        return await self.ask(task, payload, Verification, 'quality')
 
     async def rewrite(self, query, previous, feedback):
         result = await self.ask(REWRITE_TASK.format(lang=self.profile.subtitle_language),

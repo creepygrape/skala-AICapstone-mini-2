@@ -39,7 +39,7 @@ class Question(BaseModel):
 
 
 def load_questions(path: Path) -> list[Question]:
-    rows=[Question.model_validate(json.loads(line)) for line in path.read_text().splitlines() if line.strip()]
+    rows=[Question.model_validate(json.loads(line)) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     if not rows or len({r.id for r in rows})!=len(rows):
         raise ValueError('Dataset must be nonempty with unique IDs')
     return rows

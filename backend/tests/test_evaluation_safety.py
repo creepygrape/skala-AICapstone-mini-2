@@ -33,7 +33,10 @@ def test_output_symlink_escape_and_relocated_private_root_are_rejected(monkeypat
     monkeypatch.setattr(paths,'ROOT',tmp_path)
     root=tmp_path/'eval/private';root.mkdir(parents=True)
     outside=tmp_path/'public';outside.mkdir()
-    (root/'link').symlink_to(outside,target_is_directory=True)
+    try:
+        (root/'link').symlink_to(outside,target_is_directory=True)
+    except OSError:
+        pytest.skip('symlink creation needs privilege (Windows without developer mode)')
     with pytest.raises(ValueError): private_output('eval/private/link/leak.json')
     other=tmp_path/'other';other.mkdir();(other/'eval').symlink_to(tmp_path/'eval',target_is_directory=True)
     monkeypatch.setattr(paths,'ROOT',other)

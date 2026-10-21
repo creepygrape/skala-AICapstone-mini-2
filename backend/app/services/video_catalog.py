@@ -18,7 +18,7 @@ def resolve_manifest(manifest: Path | str | None = None) -> Path:
 def load_videos(manifest: Path | None = None) -> list[Video]:
     """Read only registered metadata; does not load transcripts or models."""
     path = resolve_manifest(manifest)
-    return [Video.model_validate(row) for row in json.loads(path.read_text())]
+    return [Video.model_validate(row) for row in json.loads(path.read_text(encoding="utf-8"))]
 
 
 class Catalog:
