@@ -14,7 +14,7 @@ from langgraph.graph import END, START, StateGraph
 from langsmith import tracing_context
 
 from backend.app.schemas import ContextReply, SceneResult, SearchReply, SearchRequest, SearchResponse
-from backend.app.services.search import (SearchFailure, call_tool, evidence_key,
+from backend.app.services.search import (SearchFailure, call_tool, evidence_key, fuse_replies,
                                          ground_candidates, timing_warning)
 from backend.app.services.video_catalog import ROOT
 
@@ -82,8 +82,10 @@ class FinderAgent:
     """Compile once per lifespan; dependencies are reused, State stays per request."""
     def __init__(self, session, metadata, model, *, mode='hybrid',
                  tool_call=call_tool, timeout=60, log_path=None, telemetry=None,
-                 min_replan_budget=MIN_REPLAN_BUDGET_SECONDS, trace_dir=None):
+                 min_replan_budget=MIN_REPLAN_BUDGET_SECONDS, trace_dir=None, dual_query=False):
         self.session, self.metadata, self.model = session, metadata, model
+        # Off by default: first round also searches the user's own words (see _search).
+        self.dual_query = dual_query
         self.mode, self.tool_call, self.timeout = mode, tool_call, timeout
         self.log_path = Path(log_path) if log_path else ROOT/'logs/agent.jsonl'
         self.telemetry = telemetry
@@ -154,18 +156,41 @@ class FinderAgent:
             update['resolved_query'] = query
         return update
 
+    def _raw_query(self, state):
+        """The user's own question as a second first-round query, or None.
+
+        The Router's rewrite can miss translated wording (e.g. "manitto" vs "Secret Santa"),
+        while the multilingual dense search often still matches the original Korean.
+        Skipped for replans (the rewrite must change the search), follow-ups (the bare question
+        is only a pronoun) and when it equals the Router query.
+        """
+        if not self.dual_query or state.get('attempt',0) != 0 or state.get('resolved_query'):
+            return None
+        raw = state['user_query']
+        return None if raw.casefold() == state['query'].casefold() else raw
+
     async def _search(self, state, stats):
         stats.search_attempts += 1
-        reply = await self._tool(stats,'search_transcripts',
-            {'query':state['query'],'mode':self.mode,
-             'top_k':min(3+len(state.get('exclude',[])),20)},SearchReply)
+        top_k = min(3+len(state.get('exclude',[])),20)
+        arguments = {'query':state['query'],'mode':self.mode,'top_k':top_k}
+        reply = await self._tool(stats,'search_transcripts',arguments,SearchReply)
+        raw, tried = self._raw_query(state), None
+        if raw is not None:
+            try:
+                extra = await self._tool(stats,'search_transcripts',{**arguments,'query':raw},SearchReply)
+            except SearchFailure:
+                stats.note('search_dual_failed', query=raw)   # the primary search still stands
+            else:
+                reply = fuse_replies([reply, extra], top_k)
+                tried = raw
         if stats.trace is not None:
             stats.note('search', attempt=state.get('attempt',0), query=state['query'], candidates=[
                 {'rank':i, 'video_id':c.chunk.video_id, 'start':c.chunk.start_seconds,
                  'end':c.chunk.end_seconds, 'score':round(c.score,5),
                  'selected_cue_id':c.selected_cue_id, 'text':c.chunk.text_for_retrieval[:300]}
                 for i,c in enumerate(reply.candidates,1)])
-        return {'reply':reply}
+        # A query that was actually searched belongs in the history, so a rewrite cannot repeat it.
+        return {'reply':reply,**({'queries':[*state['queries'],tried]} if tried else {})}
 
     async def _context(self, state, stats):
         async def counted(name, arguments, schema):

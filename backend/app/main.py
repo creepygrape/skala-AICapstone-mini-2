@@ -67,6 +67,7 @@ async def lifespan(app):
                 app.state.agent = FinderAgent(session,app.state.videos,model,
                     mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid',
                     tool_call=call,telemetry=telemetry,
+                    dual_query=os.getenv('WISH_DUAL_QUERY')=='1',
                     trace_dir=trace_dir(os.getenv('WISH_AGENT_TRACE')))
             yield
         finally:

@@ -606,3 +606,154 @@ def test_exclude_is_filtered_before_context_calls(tmp_path):
     assert [a['top_k'] for n,a in calls if n=='search_transcripts'][0]==min(3+len(set(exclude)),20)
     assert contexts<=3
     assert contexts<=base
+
+
+# ---- dual first query: Router rewrite + the user's own words (WISH_DUAL_QUERY)
+
+def test_dual_query_is_off_by_default(tmp_path):
+    agent,session=make_agent(tmp_path,ScriptedModel(('relevant',),route_query='nothing matches here'))
+    asyncio.run(agent.run('ryokan'))
+    assert session.queries[0]=='nothing matches here' and 'ryokan' not in session.queries[:1]
+    assert len([q for q in session.queries if q=='ryokan'])==0
+
+
+def test_dual_query_adds_the_users_own_words_in_the_first_round_only(tmp_path):
+    # The Router rewrite finds nothing; the user's own words do.
+    model=ScriptedModel(('irrelevant','relevant'),route_query='nothing matches here',
+                        rewrite_queries=('ryokan','look over there'))   # 1st rewrite repeats the user's words
+    agent,session=make_agent(tmp_path,model,dual_query=True)
+    response,stats=asyncio.run(agent.run('ryokan'))
+    assert session.queries[:2]==['nothing matches here','ryokan']      # round 0: both queries
+    # The user's words were already searched, so the repeated rewrite is rejected instead of re-run.
+    assert stats['search_attempts']==1 and len(session.queries)==2
+    assert 'replan_query_unchanged' in response.warnings
+
+
+def test_dual_query_rescues_a_router_miss_without_a_replan(tmp_path):
+    base_agent,base_session=make_agent(tmp_path,ScriptedModel(('relevant',),route_query='nothing matches here'))
+    base,_=asyncio.run(base_agent.run('ryokan'))
+    assert base.search_attempts>1                                       # Router miss: only a replan finds it
+    agent,session=make_agent(tmp_path,ScriptedModel(('relevant',),route_query='nothing matches here'),dual_query=True)
+    response,stats=asyncio.run(agent.run('ryokan'))
+    assert response.status=='found' and response.search_attempts==1
+    assert stats['llm_calls']==2                                        # route + verify: no extra LLM call
+    for r in response.results:
+        assert r.evidence_text in {c.original_text for c in session.catalog.cues[r.video_id]}
+
+
+def test_dual_query_skips_identical_queries_followups_and_unsupported(tmp_path):
+    agent,session=make_agent(tmp_path,ScriptedModel(('relevant',),route_query='ryokan'),dual_query=True)
+    asyncio.run(agent.run('ryokan'))
+    assert session.queries==['ryokan']                                  # same text: one search
+    model=FollowUpModel(('relevant',))
+    agent,session=make_agent(tmp_path,model,dual_query=True)
+    asyncio.run(agent.run('another one',history=[{'query':'scene','top':None}]))
+    assert len(session.queries)==1                                      # bare follow-up is not a query
+    agent,session=make_agent(tmp_path,ScriptedModel(intent='unsupported'),dual_query=True)
+    asyncio.run(agent.run('what colour was the shirt'))
+    assert session.queries==[]
+
+
+def test_dual_query_extra_search_failure_keeps_the_primary_result(tmp_path):
+    agent,session=make_agent(tmp_path,ScriptedModel(('relevant',),route_query='RIKU chose RIKU'),
+                             behavior='tool_error',dual_query=True,)
+    session.fail_search_number=2                                        # only the extra search fails
+    response,stats=asyncio.run(agent.run('ryokan'))
+    assert response.status=='found' and len(session.queries)==2 and stats['search_attempts']==1
+
+
+def test_fuse_replies_ranks_consensus_first_and_drops_duplicates(tmp_path):
+    from backend.app.services.search import fuse_replies
+    _,session=make_agent(tmp_path)
+    one=session.retriever.search('ryokan','keyword',3)
+    two=session.retriever.search('RIKU chose RIKU','keyword',3)
+    both=fuse_replies([one,two],5)
+    keys=[(c.chunk.video_id,c.selected_cue_id) for c in both.candidates]
+    assert len(keys)==len(set(keys))                                    # one candidate per evidence cue
+    assert fuse_replies([one,two],1).candidates[0].chunk.chunk_id==both.candidates[0].chunk.chunk_id
+    shared=fuse_replies([one,one],5)                                    # same chunk twice scores double, appears once
+    assert [c.chunk.chunk_id for c in shared.candidates]==[c.chunk.chunk_id for c in one.candidates]
+    assert shared.candidates[0].score>one.candidates[0].score
+
+
+def test_dual_query_replan_after_it_still_runs_a_single_query_round(tmp_path):
+    model=ScriptedModel(('irrelevant','relevant'),route_query='nothing matches here',
+                        rewrite_queries=('look over there',))
+    agent,session=make_agent(tmp_path,model,dual_query=True)
+    response,stats=asyncio.run(agent.run('ryokan'))
+    assert session.queries==['nothing matches here','ryokan','look over there']
+    assert stats['search_attempts']==2 and response.status=='found'
+
+
+def _multi_cue_candidate(session):
+    """A synthetic chunk holding several cues, as a Candidate."""
+    for candidate in session.retriever.search('RIKU chose RIKU','keyword',3).candidates:
+        if len(candidate.chunk.cue_ids)>=2:
+            return candidate
+    raise AssertionError('fixture has no multi-cue chunk')
+
+
+def test_fuse_keeps_each_querys_selected_cue_in_the_same_chunk(tmp_path):
+    from backend.app.services.search import fuse_replies
+    from backend.app.schemas import SearchReply
+    _,session=make_agent(tmp_path)
+    base=_multi_cue_candidate(session)
+    cue_a,cue_b=base.chunk.cue_ids[0],base.chunk.cue_ids[1]
+    router=base.model_copy(update={'selected_cue_id':cue_a})
+    raw=base.model_copy(update={'selected_cue_id':cue_b})          # same chunk, the user's words pick another cue
+    fused=fuse_replies([SearchReply(candidates=[router],mode='keyword'),
+                        SearchReply(candidates=[raw],mode='keyword')],5)
+    assert [c.selected_cue_id for c in fused.candidates]==[cue_a,cue_b]   # neither cue is dropped
+    assert all(c.chunk.chunk_id==base.chunk.chunk_id for c in fused.candidates)
+    # With room for only one, the first query's cue wins the tie but the other is not silently merged.
+    assert [c.selected_cue_id for c in fuse_replies([SearchReply(candidates=[router],mode='keyword'),
+        SearchReply(candidates=[raw],mode='keyword')],1).candidates]==[cue_a]
+
+
+def _far_candidate(base, name, start, cue):
+    """A candidate in its own chunk, far from the others (no overlap rule applies)."""
+    chunk=base.chunk.model_copy(update={'chunk_id':name,'start_seconds':start,'end_seconds':start+20,'cue_ids':(cue,)})
+    return base.model_copy(update={'chunk':chunk,'selected_cue_id':cue})
+
+
+def test_fuse_interleaves_so_a_shared_weak_cue_does_not_push_out_a_querys_second_best(tmp_path):
+    # Regression for a real case: both queries chose the same weaker cue (X); a score sum put X
+    # first and pushed the Router's second-best (the right scene) out of the 3 verified slots.
+    from backend.app.services.search import fuse_replies
+    from backend.app.schemas import SearchReply
+    _,session=make_agent(tmp_path)
+    base=_multi_cue_candidate(session)
+    p1,p2,shared=(_far_candidate(base,f'c{i}',100*i,f'cue{i}') for i in (1,2,3))
+    r1=_far_candidate(base,'c4',400,'cue4')
+    router=SearchReply(candidates=[p1,p2,shared],mode='keyword')
+    raw=SearchReply(candidates=[r1,shared.model_copy()],mode='keyword')
+    fused=fuse_replies([router,raw],3)
+    assert [c.selected_cue_id for c in fused.candidates]==['cue1','cue4','cue2']   # p1, r1, p2 - never the shared cue first
+    # The shared cue is still reachable when there is room, and it appears only once.
+    wide=[c.selected_cue_id for c in fuse_replies([router,raw],5).candidates]
+    assert wide==['cue1','cue4','cue2','cue3'] and len(wide)==len(set(wide))
+
+
+def test_fuse_shared_cue_uses_one_slot_and_sums_the_score(tmp_path):
+    from backend.app.services.search import fuse_replies
+    from backend.app.schemas import SearchReply
+    _,session=make_agent(tmp_path)
+    base=_multi_cue_candidate(session)
+    a,b,c=(_far_candidate(base,f'c{i}',100*i,f'cue{i}') for i in (1,2,3))
+    router=SearchReply(candidates=[a,b],mode='keyword')
+    raw=SearchReply(candidates=[a.model_copy(),c],mode='keyword')            # both pick cue1 first
+    fused=fuse_replies([router,raw],3)
+    assert [x.selected_cue_id for x in fused.candidates]==['cue1','cue2','cue3']  # the shared first cue frees a slot
+    assert fused.candidates[0].score>fused.candidates[1].score               # summed RRF score kept for traces
+
+
+def test_fuse_still_drops_overlapping_different_chunks(tmp_path):
+    from backend.app.services.search import fuse_replies
+    from backend.app.schemas import SearchReply
+    _,session=make_agent(tmp_path)
+    base=_multi_cue_candidate(session)
+    neighbour_chunk=base.chunk.model_copy(update={'chunk_id':'other-chunk','start_seconds':base.chunk.start_seconds+3})
+    twin=base.model_copy(update={'chunk':neighbour_chunk,'selected_cue_id':base.chunk.cue_ids[1]})
+    first=base.model_copy(update={'selected_cue_id':base.chunk.cue_ids[0]})
+    fused=fuse_replies([SearchReply(candidates=[first],mode='keyword'),SearchReply(candidates=[twin],mode='keyword')],5)
+    assert len(fused.candidates)==1                                   # overlapping chunks: one evidence window
