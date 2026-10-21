@@ -55,28 +55,45 @@ def evidence_key(result):
 
 
 def fuse_replies(replies, limit):
-    """Merge candidate lists from several queries with RRF (k=60) over their ranks.
+    """Merge candidate lists from several queries, taking their ranks in turn (first list first).
 
-    A chunk found by more than one query ranks first; overlapping or near-duplicate chunks of
-    the same video are dropped like in the retriever. Source cues are never rewritten here.
+    The point is to get each query's best candidates into the few slots that go to semantic
+    verification, so the lists are interleaved rank by rank rather than re-scored: a score sum
+    would rank a cue chosen by both queries first even when it is the weaker evidence and push a
+    query's second-best (possibly the right scene) out of the limit. A cue chosen by several
+    queries appears once, so it frees a slot instead of using two. `score` is the RRF sum, for traces.
+
+    The identity of a candidate is its evidence cue (video + selected cue), the same key that
+    grounding and `exclude` use. The selected cue is chosen per query, so one chunk can yield
+    different cues for different queries: each stays a candidate with its own cue. Different
+    chunks that overlap or start within 10s of each other are deduplicated like in the retriever.
+    Source cues are never rewritten here.
     """
-    scores, first_seen = {}, {}
+    def identity(c):
+        return (c.chunk.video_id, c.selected_cue_id or c.chunk.chunk_id)
+    scores = {}
     for reply in replies:
         for rank, candidate in enumerate(reply.candidates, 1):
-            key = candidate.chunk.chunk_id
-            scores[key] = scores.get(key, 0) + 1/(60+rank)
-            first_seen.setdefault(key, candidate)
-    order = {key: i for i, key in enumerate(first_seen)}
-    merged = []
-    for key in sorted(scores, key=lambda k: (-scores[k], order[k])):
-        candidate = first_seen[key]
-        if any(m.chunk.video_id == candidate.chunk.video_id and
-               (set(m.chunk.cue_ids) & set(candidate.chunk.cue_ids) or
-                abs(m.chunk.start_seconds - candidate.chunk.start_seconds) < 10) for m in merged):
-            continue
-        merged.append(candidate.model_copy(update={'score': scores[key]}))
-        if len(merged) >= limit:
-            break
+            scores[identity(candidate)] = scores.get(identity(candidate), 0) + 1/(60+rank)
+    merged, seen = [], set()
+    depth = max((len(reply.candidates) for reply in replies), default=0)
+    for position in range(depth):
+        for reply in replies:
+            if position >= len(reply.candidates):
+                continue
+            candidate = reply.candidates[position]
+            key = identity(candidate)
+            if key in seen:
+                continue
+            seen.add(key)
+            if any(m.chunk.video_id == candidate.chunk.video_id and
+                   m.chunk.chunk_id != candidate.chunk.chunk_id and
+                   (set(m.chunk.cue_ids) & set(candidate.chunk.cue_ids) or
+                    abs(m.chunk.start_seconds - candidate.chunk.start_seconds) < 10) for m in merged):
+                continue
+            merged.append(candidate.model_copy(update={'score': scores[key]}))
+            if len(merged) >= limit:
+                return SearchReply(candidates=merged, mode=replies[0].mode)
     return SearchReply(candidates=merged, mode=replies[0].mode)
 
 
