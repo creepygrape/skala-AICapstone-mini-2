@@ -287,3 +287,7 @@ JSONL 로컬 로그에는 요청 ID·의도·상태·단계별 시간·Tool/LLM 
 `POST /api/search/stream`은 Graph의 공개 진행 콜백을 SSE로 변환한다. `routing/searching/validating/replanning`에는 request ID·단계·검색 attempt·고정 문구만 포함하고, `result`는 최종 `SearchResponse` 생성 이후 한 번만 전송한다. 내부 LangGraph 이벤트나 모델 추론 내용을 그대로 노출하지 않는다.
 
 입력 검증·readiness·동시 요청은 스트림 전 HTTP 오류, 실행 중 모델·Agent·MCP 실패는 `error → done(status=error)` 계약을 사용한다. Vue는 POST fetch와 ReadableStream으로 LF/CRLF, 분할 UTF-8, 분할/복수 프레임, 멀티라인 data를 처리한다. 연결이 `done` 전에 종료되면 성공 결과를 표시하지 않는다. 기존 JSON API는 평가·회귀 경로로 유지한다.
+
+### PR #4 리뷰 보완
+
+JSON/SSE 검색 분기·오류 변환·로그는 공통 실행 함수에서 처리한다. SSE 응답 수명이 busy 정리를 보장하며, 취소 작업은 shield로 최대 5초 기다리고 미종료 시 task 종료까지 busy를 유지한다. lifespan은 남은 task 종료 후 모델·MCP를 닫는다. 기본 검색의 validating은 검색 완료 후, Graph의 replanning은 새 검색어 채택 후 전송한다. 상세 정책·트레이드오프는 ADR-0003·0005를 따른다.

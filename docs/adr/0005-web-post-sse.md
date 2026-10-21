@@ -30,3 +30,17 @@ Vue 3 단일 페이지 + FastAPI `POST /api/search/stream`으로 UI를 제공한
 
 ## 재검토 조건
 양방향 서버 Push 또는 채팅 협업 기능이 명확히 요구될 때 WebSocket 검토.
+
+## PR #4 리뷰 반영 — 응답 수명과 취소 정리 (2026-10-21)
+
+배경: 스트림 제너레이터가 시작되기 전에 연결이 끊기면 제너레이터의 finally가 실행되지 않아 busy가 남는다. 실행 중 연결 종료의 AnyIO 취소 범위는 정리 대기까지 반복 취소할 수 있다.
+
+결정: 응답 __call__의 finally에서도 동일한 StreamOwner 정리를 호출한다. 실행 task를 한 번 취소하고 shield 안에서 최대 5초 기다린다. 종료 콜백은 대기 전에 등록한다. 제한 시간 내 종료하지 않으면 경고를 기록하고 task 종료까지 busy를 유지한다. task는 lifespan이 보유하며 MCP·모델을 닫기 전에 종료를 기다린다. 종료용 queue sentinel은 제거하고 done 프레임으로 소비를 끝내어 가득 찬 queue가 취소 정리를 막지 않게 한다.
+
+대안/트레이드오프: 제너레이터 finally만으로 관리하면 미시작 경로를 놓친다. 5초 뒤 무조건 잠금을 풀면 같은 MCP 세션에 작업이 겹칠 수 있다. 채택안은 안전하게 겹침을 막지만 정리가 끝나지 않는 작업은 검색·서버 종료를 지연시킬 수 있다. MCP 서버 내부의 동기 계산이 즉시 취소됨을 보장하지 않는다.
+
+JSON/SSE는 공통 실행 함수로 검색 분기·오류 변환·로그를 공유한다. 기본 검색은 search_transcripts 완료 후 validating을 보낸다. unsupported는 원문 검증 실패와 범위 밖 안내를 구분하며 partial/ambiguous에도 화자 안내를 함께 표시한다.
+
+검증 근거: 실제 ASGI 즉시 disconnect·실행 중 disconnect·전송 실패, 지연 정리·제한 시간 초과 후 busy 유지·종료 후 재검색, 기본 검색 도구/단계 순서와 JSON/SSE 오류 일치 회귀 테스트를 추가했다. 실행 명령과 실제 결과는 reports/day2-sse-web.md에 기록한다.
+
+재검토 조건: 정리 시간 초과가 반복되거나 ASGI spec 2.4 서버로 바꾸는 경우. 후자는 긴 모델 대기 중 disconnect 감지가 다음 send까지 늦어질 수 있어 별도 감지 또는 heartbeat를 검토한다.

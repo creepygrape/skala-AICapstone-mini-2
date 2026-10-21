@@ -94,7 +94,7 @@ async def ground_candidates(reply, metadata, counted):
     return results, warnings, timing, contexts
 
 
-async def search_and_verify(session, query, mode, metadata, *, request_id=None, tool_call=call_tool):
+async def search_and_verify(session, query, mode, metadata, *, request_id=None, tool_call=call_tool, progress=None):
     """Normalize input and verify each source candidate, never infer meaning/speaker.
 
     Invalid requests raise Pydantic validation errors. Candidate grounding failures
@@ -113,8 +113,12 @@ async def search_and_verify(session, query, mode, metadata, *, request_id=None, 
 
     try:
         async with asyncio.timeout(60):
+            if progress is not None:
+                await progress('searching', {'attempt': 0})
             reply = await counted('search_transcripts', {'query': query, 'mode': mode, 'top_k': 3}, SearchReply)
             rounds = 1
+            if progress is not None:
+                await progress('validating', {'attempt': 0})
             results, source_warnings, timing, _ = await ground_candidates(reply, metadata, counted)
             warnings = ['semantic_verification_skipped', 'speaker_unknown', *source_warnings]
             status = 'partial' if results else ('unsupported' if reply.candidates else 'not_found')

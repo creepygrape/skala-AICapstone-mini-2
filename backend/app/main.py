@@ -1,4 +1,4 @@
-"""JSON search: preserved A/B baseline and opt-in bounded Agent. SSE follows."""
+"""Shared JSON and POST SSE search with bounded Agent and A/B baselines."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -8,7 +8,6 @@ import time
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
 
 from backend.app.mcp.client import connect
 from backend.app.schemas import MetadataReply, SearchRequest, SearchResponse
@@ -17,7 +16,7 @@ from backend.app.services.video_catalog import load_videos
 from backend.app.agent.graph import FinderAgent
 from backend.app.agent.model import OllamaModel
 from backend.app.agent.telemetry import TelemetryPublisher
-from backend.app.sse import MESSAGES, encode_event, public_error
+from backend.app.sse import MESSAGES, ManagedStreamingResponse, StreamOwner, encode_event, public_error
 
 logger = logging.getLogger("wish_finder")
 
@@ -26,6 +25,7 @@ logger = logging.getLogger("wish_finder")
 async def lifespan(app):
     app.state.session = None
     app.state.busy = False
+    app.state.search_tasks = set()
     app.state.video_ids = [v.video_id for v in load_videos()]
     app.state.videos = {}
     app.state.agent = None
@@ -51,6 +51,12 @@ async def lifespan(app):
                     tool_call=call,telemetry=telemetry)
             yield
         finally:
+            tasks = list(app.state.search_tasks)
+            for task in tasks:
+                if not task.cancelling():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
             if model is not None:
                 await model.close()
             if telemetry is not None:
@@ -81,93 +87,90 @@ async def videos():
     return {"videos":[video.model_dump() for video in app.state.videos.values()]}
 
 
-@app.post('/api/search',response_model=SearchResponse)
-async def search(request: SearchRequest):
-    ready()
-    # No await between check/set: atomic on this single-worker event loop.
-    if app.state.busy:
-        raise HTTPException(503,"다른 검색이 진행 중입니다. 잠시 후 다시 시도해 주세요.")
-    app.state.busy=True
-    request_id=str(uuid4());start=time.monotonic()
+async def run_search(query: str, request_id: str, progress=None) -> SearchResponse:
+    """Run the shared JSON/SSE pipeline; raise only safe SearchFailure errors."""
+    started = time.monotonic()
     try:
-        mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid'
         if app.state.agent is not None:
-            response, _ = await app.state.agent.run(request.query,request_id=request_id)
+            kwargs = {'request_id': request_id}
+            if progress is not None:
+                kwargs['progress'] = progress
+            response, _ = await app.state.agent.run(query, **kwargs)
             return response
-        execution = await search_and_verify(app.state.session, request.query, mode,
-            app.state.videos, request_id=request_id, tool_call=call)
+        mode = 'keyword' if os.getenv('WISH_KEYWORD_ONLY') == '1' else 'hybrid'
+        execution = await search_and_verify(app.state.session, query, mode,
+            app.state.videos, request_id=request_id, tool_call=call, progress=progress)
         return execution.response
     except SearchFailure as exc:
         logger.warning('search_failed request_id=%s code=%s', request_id, exc.code)
-        code,message = public_error(exc)
-        raise HTTPException(503,detail={'request_id':request_id,'message':message,'code':code}) from None
+        raise
+    except Exception as exc:
+        logger.exception('search_failed request_id=%s code=agent_failure', request_id)
+        raise SearchFailure('agent_failure') from exc
     finally:
-        app.state.busy=False
-        logger.info('search request_id=%s elapsed_seconds=%.3f',request_id,time.monotonic()-start)
+        logger.info('search request_id=%s elapsed_seconds=%.3f',
+                    request_id, time.monotonic()-started)
+
+
+def reserve_search():
+    """Reserve one search atomically on the single-worker event loop."""
+    ready()
+    if app.state.busy:
+        raise HTTPException(503, '다른 검색이 진행 중입니다. 잠시 후 다시 시도해 주세요.')
+    app.state.busy = True
+
+
+@app.post('/api/search', response_model=SearchResponse)
+async def search(request: SearchRequest):
+    reserve_search()
+    request_id = str(uuid4())
+    try:
+        return await run_search(request.query, request_id)
+    except SearchFailure as exc:
+        code, message = public_error(exc)
+        raise HTTPException(503, detail={'request_id':request_id,
+            'message':message, 'code':code}) from None
+    finally:
+        app.state.busy = False
 
 
 @app.post('/api/search/stream')
 async def search_stream(request: SearchRequest):
-    """Stream public progress and emit results only after the search completes."""
-    ready()
-    if app.state.busy:
-        raise HTTPException(503,'다른 검색이 진행 중입니다. 잠시 후 다시 시도해 주세요.')
-    app.state.busy=True
-    request_id=str(uuid4());started=time.monotonic()
-    queue=asyncio.Queue(maxsize=32)
+    """Stream public progress; response lifetime owns cancellation and reservation."""
+    reserve_search()
+    request_id = str(uuid4())
+    queue = asyncio.Queue(maxsize=32)
+
+    def release():
+        app.state.busy = False
+
+    owner = StreamOwner(release, getattr(app.state, 'search_tasks', None))
 
     async def progress(event, payload):
-        data={'request_id':request_id,'message':MESSAGES[event],**payload}
-        await queue.put((event,data))
+        await queue.put((event, {'request_id':request_id,
+            'message':MESSAGES[event], **payload}))
 
     async def execute():
         try:
-            mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid'
-            if app.state.agent is not None:
-                response,_=await app.state.agent.run(
-                    request.query,request_id=request_id,progress=progress)
-            else:
-                await progress('searching',{'attempt':0})
-                await progress('validating',{'attempt':0})
-                execution=await search_and_verify(app.state.session,request.query,mode,
-                    app.state.videos,request_id=request_id,tool_call=call)
-                response=execution.response
-            await queue.put(('result',response.model_dump()))
-            await queue.put(('done',{'request_id':request_id,'status':response.status}))
+            response = await run_search(request.query, request_id, progress)
+            await queue.put(('result', response.model_dump()))
+            await queue.put(('done', {'request_id':request_id, 'status':response.status}))
         except SearchFailure as exc:
-            logger.warning('stream_search_failed request_id=%s code=%s',request_id,exc.code)
-            code,message=public_error(exc)
-            await queue.put(('error',{'request_id':request_id,'code':code,'message':message}))
-            await queue.put(('done',{'request_id':request_id,'status':'error'}))
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception('stream_search_failed request_id=%s code=agent_failure',request_id)
-            exc=SearchFailure('agent_failure')
-            code,message=public_error(exc)
-            await queue.put(('error',{'request_id':request_id,'code':code,'message':message}))
-            await queue.put(('done',{'request_id':request_id,'status':'error'}))
-        finally:
-            await queue.put((None,None))
+            code, message = public_error(exc)
+            await queue.put(('error', {'request_id':request_id, 'code':code, 'message':message}))
+            await queue.put(('done', {'request_id':request_id, 'status':'error'}))
 
     async def events():
-        task=asyncio.create_task(execute())
+        owner.start(execute())
         try:
             while True:
-                event,data=await queue.get()
-                if event is None:
+                event, data = await queue.get()
+                yield encode_event(event, data)
+                if event == 'done':
                     break
-                yield encode_event(event,data)
         finally:
-            if not task.done():
-                task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            app.state.busy=False
-            logger.info('stream_search request_id=%s elapsed_seconds=%.3f',
-                        request_id,time.monotonic()-started)
+            await owner.close()
 
-    return StreamingResponse(events(),media_type='text/event-stream',headers={
-        'Cache-Control':'no-cache','X-Accel-Buffering':'no'})
+    return ManagedStreamingResponse(events(), owner=owner,
+        media_type='text/event-stream', headers={
+            'Cache-Control':'no-cache', 'X-Accel-Buffering':'no'})

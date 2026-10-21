@@ -111,3 +111,187 @@ def test_closing_stream_cancels_agent_and_releases_busy():
         finally:
             for name,value in previous.items(): setattr(main.app.state,name,value)
     asyncio.run(run())
+
+
+def test_asgi_disconnect_before_iterator_start_releases_reservation(monkeypatch):
+    import backend.app.main as main
+    from backend.app.schemas import SearchRequest
+    async def run():
+        monkeypatch.setattr(main.app.state, 'session', object(), raising=False)
+        monkeypatch.setattr(main.app.state, 'busy', False, raising=False)
+        response = await main.search_stream(SearchRequest(query='장면'))
+        assert main.app.state.busy
+        async def receive(): return {'type': 'http.disconnect'}
+        async def send(message):
+            # Force disconnect to win before first iterator access.
+            await asyncio.sleep(.01)
+        await response({'type':'http', 'asgi':{'spec_version':'2.3'}}, receive, send)
+        assert response.owner.task is None and not main.app.state.busy
+    asyncio.run(run())
+
+
+def test_asgi_disconnect_waits_for_cleanup_and_timeout_keeps_busy(monkeypatch):
+    import backend.app.main as main
+    from backend.app.schemas import SearchRequest, SearchResponse
+    from backend.app.sse import StreamOwner
+    async def run(timeout):
+        entered, cleaning, finish = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        tasks = set()
+        class SlowAgent:
+            async def run(self, query, *, request_id, progress):
+                entered.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    cleaning.set()
+                    await finish.wait()
+        monkeypatch.setattr(main.app.state, 'session', object(), raising=False)
+        monkeypatch.setattr(main.app.state, 'agent', SlowAgent(), raising=False)
+        monkeypatch.setattr(main.app.state, 'busy', False, raising=False)
+        monkeypatch.setattr(main.app.state, 'search_tasks', tasks, raising=False)
+        monkeypatch.setattr(StreamOwner, 'cleanup_timeout', timeout)
+        response = await main.search_stream(SearchRequest(query='장면'))
+        async def receive():
+            await entered.wait()
+            return {'type':'http.disconnect'}
+        async def send(message): pass
+        request = asyncio.create_task(response(
+            {'type':'http', 'asgi':{'spec_version':'2.3'}}, receive, send))
+        await cleaning.wait()
+        assert main.app.state.busy
+        from fastapi import HTTPException
+        try:
+            await main.search(SearchRequest(query='다음 검색'))
+        except HTTPException as exc:
+            assert exc.status_code == 503
+        else:
+            raise AssertionError('overlapping search accepted')
+        if timeout < 1:
+            await asyncio.wait_for(request, 1)
+            assert main.app.state.busy and tasks
+        finish.set()
+        await request
+        for _ in range(10):
+            if not main.app.state.busy: break
+            await asyncio.sleep(0)
+        assert not main.app.state.busy and not tasks
+        class NextAgent:
+            async def run(self, query, *, request_id):
+                return SearchResponse(request_id=request_id, status='not_found',
+                    search_attempts=1, results=[], warnings=[]), {}
+        main.app.state.agent = NextAgent()
+        assert (await main.search(SearchRequest(query='다음 검색'))).status == 'not_found'
+    asyncio.run(run(5))
+    asyncio.run(run(.01))
+
+
+def test_send_failure_before_body_start_releases_busy():
+    from backend.app.sse import ManagedStreamingResponse, StreamOwner
+    async def run():
+        released = []
+        async def body(): yield 'unused'
+        async def receive(): return {'type':'http.disconnect'}
+        async def send(message): raise OSError('connection lost')
+        response = ManagedStreamingResponse(body(), owner=StreamOwner(lambda:released.append(True)))
+        try:
+            await response({'type':'http', 'asgi':{'spec_version':'2.4'}}, receive, send)
+        except Exception:
+            pass
+        assert released == [True]
+    asyncio.run(run())
+
+
+def test_baseline_progress_tracks_tool_boundary(monkeypatch):
+    import backend.app.main as main
+    from backend.app.services.search import call_tool, search_and_verify
+    from backend.tests.test_search_service import FakeSession
+    async def run():
+        session = FakeSession('normal')
+        v = session.catalog.videos['SYNTHETIC01']
+        from backend.app.schemas import MetadataReply
+        metadata = {v.video_id: MetadataReply(video_id=v.video_id, title=v.title,
+            url=v.url, title_verified=False, timing_verified=True)}
+        events = []
+        async def tool(*args):
+            events.append(args[1])
+            return await call_tool(*args)
+        async def progress(event, payload): events.append(event)
+        await search_and_verify(session, 'RIKU chose RIKU', 'keyword', metadata,
+            tool_call=tool, progress=progress)
+        assert events[:4] == ['searching','search_transcripts','validating','get_scene_context']
+    asyncio.run(run())
+
+
+def test_json_and_sse_unexpected_failure_have_same_safe_code(monkeypatch):
+    import backend.app.main as main
+    model = ScriptedModel()
+    async def fail(*args, **kwargs): raise RuntimeError('private details')
+    configure(monkeypatch, main, model)
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(main.app.state.agent, 'run', fail)
+        response = client.post('/api/search', json={'query':'장면'})
+        assert response.status_code == 503
+        events = parse_events(client.post('/api/search/stream', json={'query':'장면'}).text)
+        assert events[0][0] == 'error'
+        assert response.json()['detail'] == events[0][1] | {'request_id':response.json()['detail']['request_id']}
+        assert events[0][1]['code'] == 'agent_failure'
+        assert 'private details' not in response.text + str(events)
+
+
+def test_disconnect_with_full_progress_queue_finishes_cleanup(monkeypatch):
+    import backend.app.main as main
+    from backend.app.schemas import SearchRequest
+    async def run():
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        class FloodAgent:
+            async def run(self, query, *, request_id, progress):
+                started.set()
+                try:
+                    for _ in range(100):
+                        await progress('searching', {'attempt':0})
+                finally:
+                    cancelled.set()
+        monkeypatch.setattr(main.app.state, 'session', object(), raising=False)
+        monkeypatch.setattr(main.app.state, 'agent', FloodAgent(), raising=False)
+        monkeypatch.setattr(main.app.state, 'busy', False, raising=False)
+        response = await main.search_stream(SearchRequest(query='장면'))
+        async def receive():
+            await started.wait()
+            return {'type':'http.disconnect'}
+        async def send(message):
+            if message['type'] == 'http.response.body':
+                await asyncio.Event().wait()
+        await asyncio.wait_for(response(
+            {'type':'http', 'asgi':{'spec_version':'2.3'}}, receive, send), 1)
+        assert cancelled.is_set() and not main.app.state.busy
+    asyncio.run(run())
+
+
+def test_lifespan_drains_search_tasks_before_mcp_close(monkeypatch):
+    from contextlib import asynccontextmanager
+    import backend.app.main as main
+    from backend.tests.test_search_service import FakeSession
+    started, finished = asyncio.Event(), asyncio.Event()
+    @asynccontextmanager
+    async def connect(**kwargs):
+        try:
+            yield FakeSession('normal')
+        finally:
+            assert finished.is_set()
+    async def pending():
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            await asyncio.sleep(.01)
+            finished.set()
+    monkeypatch.setattr(main, 'connect', connect)
+    monkeypatch.setenv('WISH_MANIFEST', 'data/manifest.example.json')
+    monkeypatch.delenv('WISH_AGENT_ENABLED', raising=False)
+    async def run():
+        async with main.lifespan(main.app):
+            task = asyncio.create_task(pending())
+            main.app.state.search_tasks.add(task)
+            await started.wait()
+        assert task.done() and finished.is_set()
+    asyncio.run(run())

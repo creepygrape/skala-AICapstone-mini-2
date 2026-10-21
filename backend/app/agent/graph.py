@@ -84,12 +84,14 @@ class FinderAgent:
             stats = config['configurable']['stats']
             started = time.monotonic()
             try:
-                event = {'router':'routing','search':'searching','context':'validating',
-                         'replan':'replanning'}.get(name)
+                event = {'router':'routing','search':'searching','context':'validating'}.get(name)
                 if event and stats.progress is not None:
-                    attempt = state.get('attempt',0)+(1 if name=='replan' else 0)
+                    attempt = state.get('attempt',0)
                     await stats.progress(event,{'attempt':attempt})
-                return await getattr(self, '_'+name)(state, stats)
+                update = await getattr(self, '_'+name)(state, stats)
+                if name == 'replan' and not update.get('stop_replan') and stats.progress is not None:
+                    await stats.progress('replanning', {'attempt': update['attempt']})
+                return update
             finally:
                 stats.stages.append({'node':name,'attempt':state.get('attempt',0),
                                      'seconds':round(time.monotonic()-started,4)})
