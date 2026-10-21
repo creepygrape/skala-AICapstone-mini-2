@@ -77,3 +77,7 @@ Agent 조율과 검색·데이터 접근을 분리하고 표준 MCP Tool 인터�
 ## PR #2 공통 검색 서비스
 
 MCP 호출·질의 전처리·문맥 조회·원문 검증·상태/경고 구성을 공통 서비스로 옮긴다. API의 동시 요청 제한과 60초 요청 제한은 유지하고 평가도 같은 검색 함수를 실행한다. Tool 오류와 transport 단절을 구별하며, 문항 오류는 기록 후 계속하고 세션 단절은 비공개 partial 결과를 저장한 뒤 종료한다. 외부에 예외 원문이나 로컬 경로를 노출하지 않는다.
+
+## Day 2 JSON Graph 검증
+
+Graph의 Search 노드는 search_transcripts, Context 노드는 get_scene_context를 실제 stdio로 호출한다. get_video_metadata는 기존과 같이 lifespan에서 한 번 조회해 재사용한다. 별도 MCP adapter나 SDK 변경 없이 공식 2.3.0 세션을 사용했다. API 통합 테스트는 같은 lifespan에서 연속 2회 요청 시 metadata 1회·search 2회와 context 호출을 확인한다. 생성 모델은 별도 Ollama HTTP 클라이언트이며 MCP가 담당하는 것은 검색/원문 접근이다. 초기화 실패/정상 종료 시 모델 HTTP 클라이언트도 닫는다.

@@ -49,6 +49,42 @@ class SearchExecution:
     video_timing: dict[str, str]
 
 
+async def ground_candidates(reply, metadata, counted):
+    """Shared MCP context/source grounding for baselines and Graph nodes.
+
+    Preserve the baseline's 20s context window. Missing selected cues are rejected,
+    never invented or accepted outside the candidate. Return exact context for
+    LLM checking. Broader context recovery remains a future measured change.
+    """
+    results, timing, contexts = [], {}, {}
+    warnings = []
+    for candidate in reply.candidates:
+        video = metadata.get(candidate.chunk.video_id)
+        if video is None:
+            if 'evidence_rejected' not in warnings:
+                warnings.append('evidence_rejected')
+            continue
+        context = await counted('get_scene_context', {
+            'video_id': candidate.chunk.video_id,
+            'start_seconds': candidate.chunk.start_seconds,
+            'window_seconds': 20,
+        }, ContextReply)
+        try:
+            result = verify_candidate(candidate, context, video)
+        except ValueError:
+            if 'evidence_rejected' not in warnings:
+                warnings.append('evidence_rejected')
+            continue
+        results.append(result)
+        key = f'{result.video_id}:{result.cue_ids[0]}'
+        contexts[key] = context
+        timing[result.video_id] = 'sampled' if video.timing_verified else 'unverified'
+        warning = 'video_timing_sampled' if video.timing_verified else 'video_timing_unverified'
+        if warning not in warnings:
+            warnings.append(warning)
+    return results, warnings, timing, contexts
+
+
 async def search_and_verify(session, query, mode, metadata, *, request_id=None, tool_call=call_tool):
     """Normalize input and verify each source candidate, never infer meaning/speaker.
 
@@ -70,32 +106,8 @@ async def search_and_verify(session, query, mode, metadata, *, request_id=None, 
         async with asyncio.timeout(60):
             reply = await counted('search_transcripts', {'query': query, 'mode': mode, 'top_k': 3}, SearchReply)
             rounds = 1
-            results, timing = [], {}
-            warnings = ['semantic_verification_skipped', 'speaker_unknown']
-            for candidate in reply.candidates:
-                video = metadata.get(candidate.chunk.video_id)
-                if video is None:
-                    if 'evidence_rejected' not in warnings:
-                        warnings.append('evidence_rejected')
-                    continue
-                context = await counted('get_scene_context', {
-                    'video_id': candidate.chunk.video_id,
-                    'start_seconds': candidate.chunk.start_seconds,
-                    'window_seconds': 20,
-                }, ContextReply)
-                try:
-                    result = verify_candidate(candidate, context, video)
-                except ValueError:
-                    if 'evidence_rejected' not in warnings:
-                        warnings.append('evidence_rejected')
-                    continue
-                results.append(result)
-                # Only surviving results contribute timing claims/warnings.
-                sampled = video.timing_verified
-                timing[result.video_id] = 'sampled' if sampled else 'unverified'
-                warning = 'video_timing_sampled' if sampled else 'video_timing_unverified'
-                if warning not in warnings:
-                    warnings.append(warning)
+            results, source_warnings, timing, _ = await ground_candidates(reply, metadata, counted)
+            warnings = ['semantic_verification_skipped', 'speaker_unknown', *source_warnings]
             status = 'partial' if results else ('unsupported' if reply.candidates else 'not_found')
             return SearchExecution(SearchResponse(request_id=request_id, status=status,
                 search_attempts=1, results=results, warnings=warnings), query, calls, timing)

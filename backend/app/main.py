@@ -1,4 +1,4 @@
-"""Day 1 JSON search slice. Full semantic graph and POST SSE follow on Day 2."""
+"""JSON search: preserved A/B baseline and opt-in bounded Agent. SSE follows."""
 
 import asyncio
 from contextlib import asynccontextmanager
@@ -13,6 +13,8 @@ from backend.app.mcp.client import connect
 from backend.app.schemas import MetadataReply, SearchRequest, SearchResponse
 from backend.app.services.search import SearchFailure, call_tool as call, search_and_verify
 from backend.app.services.video_catalog import load_videos
+from backend.app.agent.graph import FinderAgent
+from backend.app.agent.model import OllamaModel
 
 logger = logging.getLogger("wish_finder")
 
@@ -23,6 +25,8 @@ async def lifespan(app):
     app.state.busy = False
     app.state.video_ids = [v.video_id for v in load_videos()]
     app.state.videos = {}
+    app.state.agent = None
+    model = None
     env = {key:value for key,value in os.environ.items() if key.startswith('WISH_')}
     env.update(HF_HUB_OFFLINE="1",TRANSFORMERS_OFFLINE="1",TOKENIZERS_PARALLELISM="false")
     # Enter/exit transport and session in this lifespan task, not a child wait_for task.
@@ -34,8 +38,16 @@ async def lifespan(app):
             for video_id in app.state.video_ids:
                 video = await call(session,'get_video_metadata',{'video_id':video_id},MetadataReply)
                 app.state.videos[video_id] = video
+            if os.getenv('WISH_AGENT_ENABLED') == '1':
+                model = OllamaModel(os.getenv('WISH_LLM_MODEL','qwen3:8b'))
+                await model.ready()
+                app.state.agent = FinderAgent(session,app.state.videos,model,
+                    mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid',tool_call=call)
             yield
         finally:
+            if model is not None:
+                await model.close()
+            app.state.agent = None
             app.state.session = None
             app.state.videos = {}
 
@@ -52,7 +64,7 @@ def health():
 def ready():
     if getattr(app.state,'session',None) is None:
         raise HTTPException(503,"검색 서버가 준비되지 않았습니다.")
-    return {"status":"ready","stage":"day1_retrieval"}
+    return {"status":"ready","stage":"agent_json" if app.state.agent else "day1_retrieval"}
 
 
 @app.get('/api/videos')
@@ -71,6 +83,9 @@ async def search(request: SearchRequest):
     request_id=str(uuid4());start=time.monotonic()
     try:
         mode='keyword' if os.getenv('WISH_KEYWORD_ONLY')=='1' else 'hybrid'
+        if app.state.agent is not None:
+            response, _ = await app.state.agent.run(request.query,request_id=request_id)
+            return response
         execution = await search_and_verify(app.state.session, request.query, mode,
             app.state.videos, request_id=request_id, tool_call=call)
         return execution.response
