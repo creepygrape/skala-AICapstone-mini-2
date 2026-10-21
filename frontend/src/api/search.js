@@ -39,11 +39,12 @@ export function parseEventFrame(frame) {
   catch { throw new Error('검색 응답 형식을 해석하지 못했습니다. 다시 시도해 주세요.') }
 }
 
-export async function searchScenes(query, signal, onEvent = () => {}) {
+// `context` = {history, exclude} for follow-ups; both stay empty for a fresh conversation.
+export async function searchScenes(query, signal, onEvent = () => {}, context = {}) {
   const response = await fetch('/api/search/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ query, thread_id: null }),
+    body: JSON.stringify({ query, thread_id: null, history: context.history || [], exclude: context.exclude || [] }),
     signal,
   })
   if (!response.ok) {

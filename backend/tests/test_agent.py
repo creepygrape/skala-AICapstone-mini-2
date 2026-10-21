@@ -530,3 +530,44 @@ def test_same_cue_with_different_context_is_judged_again(tmp_path):
     response,_=asyncio.run(agent.run('장면'))
     assert model.verified_ids==[['SYNTHETIC01:2'],['SYNTHETIC01:2']]   # asked again, not reused
     assert response.status=='found' and response.search_attempts==2
+
+
+class FollowUpModel(ScriptedModel):
+    """Records the router history and the question later judged by verification."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.histories, self.verify_questions = [], []
+
+    async def route(self, query, history=None):
+        self.histories.append(history)
+        return Route(intent=self.intent,search_query=self.route_query)
+
+    async def verify(self, query, evidence):
+        self.verify_questions.append(query)
+        return await super().verify(query,evidence)
+
+
+def test_follow_up_history_reaches_router_and_rewrite_is_verified(tmp_path):
+    model=FollowUpModel(('relevant',))
+    agent,_=make_agent(tmp_path,model)
+    history=[{'query':'료칸 장면','top':None}]
+    asyncio.run(agent.run('다른 장면도',history=history))
+    assert model.histories==[history]
+    assert model.verify_questions==['RIKU chose RIKU']
+    plain=FollowUpModel(('relevant',))
+    plain_agent,_=make_agent(tmp_path,plain)
+    asyncio.run(plain_agent.run('기억나는 장면'))
+    assert plain.histories==[[]] or plain.histories==[None]
+    assert plain.verify_questions==['기억나는 장면']
+
+
+def test_exclude_drops_shown_scene_without_rejecting_it(tmp_path):
+    agent,_=make_agent(tmp_path,ScriptedModel(('relevant',)))
+    first,_=asyncio.run(agent.run('장면'))
+    shown=[f'{r.video_id}:{r.cue_ids[0]}' for r in first.results]
+    assert shown
+    agent2,_=make_agent(tmp_path,ScriptedModel(('relevant',)))
+    second,_=asyncio.run(agent2.run('장면',exclude=shown))
+    assert not {f'{r.video_id}:{r.cue_ids[0]}' for r in second.results} & set(shown)
+    assert 'evidence_rejected' not in second.warnings
+    assert second.status!='unsupported'

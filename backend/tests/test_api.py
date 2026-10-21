@@ -118,3 +118,21 @@ def test_user_sampled_timing_flag_is_reflected_in_metadata_and_warnings(monkeypa
         assert 'video_timing_unverified' not in body['warnings']
         assert 'video_timing_sampled' in body['warnings']
         assert 'semantic_verification_skipped' in body['warnings']
+
+
+def test_cue_context_endpoint_clamps_and_rejects_unknown(monkeypatch):
+    monkeypatch.setenv('WISH_MANIFEST',str(ROOT/'data/manifest.example.json'))
+    monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
+    with TestClient(app) as client:
+        body=client.get('/api/videos/SYNTHETIC01/cues/2/context?before=3&after=1').json()
+        assert [c['cue_id'] for c in body['cues']]==['1','2','3'] and body['target_cue_id']=='2'
+        assert body['cues'][1]['text']=='(RIKU chose RIKU) Got myself'
+        assert body['cues'][1]['caption_type']=='editorial' or body['cues'][1]['caption_type']=='mixed'
+        edge=client.get('/api/videos/SYNTHETIC01/cues/4/context?before=0&after=5').json()
+        assert [c['cue_id'] for c in edge['cues']]==['4']
+        assert client.get('/api/videos/SYNTHETIC01/cues/99/context').status_code==404
+        assert client.get('/api/videos/UNKNOWN00001/cues/1/context').status_code==404
+        assert client.get('/api/videos/SYNTHETIC01/cues/1/context?before=6').status_code==422
+        app.state.busy=True  # read-only context stays available during a search
+        assert client.get('/api/videos/SYNTHETIC01/cues/1/context').status_code==200
+        app.state.busy=False

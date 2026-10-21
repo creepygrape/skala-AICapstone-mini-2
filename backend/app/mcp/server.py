@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from mcp.server.mcpserver import MCPServer
 from pydantic import Field
 
-from backend.app.schemas import ContextReply, MetadataReply, SearchReply
+from backend.app.schemas import ContextReply, MetadataReply, NeighborsReply, SearchReply
 from backend.app.profile import load_profile
 from backend.app.services.video_catalog import Catalog, ROOT
 from backend.app.retrieval.hybrid import LocalEncoder, Retriever
@@ -48,6 +48,19 @@ def get_scene_context(video_id: str, start_seconds: Annotated[float, Field(ge=0)
     """
     catalog,_ = resources()
     return ContextReply(video_id=video_id,cues=catalog.context(video_id,start_seconds,window_seconds))
+
+
+@server.tool(structured_output=True)
+def get_cue_neighbors(video_id: str, cue_id: str,
+                      before: Annotated[int, Field(ge=0, le=5)] = 3,
+                      after: Annotated[int, Field(ge=0, le=5)] = 3) -> NeighborsReply:
+    """Return exact source cues before and after one cue of the same video.
+
+    Unknown video or cue IDs raise a tool error; the window never crosses videos.
+    """
+    catalog,_ = resources()
+    return NeighborsReply(video_id=video_id,target_cue_id=cue_id,
+                          cues=catalog.neighbors(video_id,cue_id,before,after))
 
 
 @server.tool(structured_output=True)

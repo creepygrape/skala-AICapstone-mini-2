@@ -70,6 +70,11 @@ ROUTE_TASK = (
     'paraphrases, so for each key noun also add one close synonym or alternative spelling '
     'in the same query (for example "sofa couch"). Speaker questions still need the related '
     'scene searched. For unsupported or chat, search_query may be an empty string.')
+FOLLOWUP_TASK = (
+    'previous_turns lists earlier questions (oldest first) with the top scene shown. If the '
+    'question refers to them ("another one", "that scene", "before it"), rewrite it as a '
+    'self-contained search query that keeps the entities and situation; otherwise ignore '
+    'previous_turns. Never treat previous_turns as source truth or add facts from it.')
 VERIFY_TASK = (
     'Judge EACH evidence_id once against the original remembered situation. '
     'relevant requires direct support for the situation in the quote or its context; '
@@ -144,9 +149,14 @@ class JsonLLM:
     async def close(self):
         raise NotImplementedError
 
-    async def route(self, query):
-        decision = await self.ask(ROUTE_TASK.format(lang=self.profile.subtitle_language),
-                                 {'question': query}, Route, 'fast')
+    async def route(self, query, history=None):
+        task = ROUTE_TASK.format(lang=self.profile.subtitle_language)
+        payload = {'question': query}
+        if history:
+            # Follow-up: earlier turns only resolve pronouns/omissions; they are not evidence.
+            task += ' ' + FOLLOWUP_TASK
+            payload['previous_turns'] = history
+        decision = await self.ask(task, payload, Route, 'fast')
         # Non-searching intents may come back blank: keep the user's question for logs/traces.
         decision.search_query = SearchRequest(query=decision.search_query.strip() or query).query
         return decision

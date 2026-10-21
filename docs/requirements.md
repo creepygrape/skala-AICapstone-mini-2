@@ -71,7 +71,7 @@
 | FR-08 | MCP Tool | `search_transcripts`, `get_scene_context`, `get_video_metadata` 중 최소 2개 이상을 실제 LangGraph에서 MCP로 호출. 3개 권장 |
 | FR-09 | 근거 검증 | 비디오·타임스탬프·원문 인용 유효성은 코드로 검증; 의미적 적합성은 전담 Validator가 점검 |
 | FR-10 | 화자 단정 방지 | `speaker=null`일 때 발화자를 확정하지 않음. 멤버 `mentioned`는 발화자와 구분 |
-| FR-11 | 웹 UI | 질문 입력 → 제출 → 진행 상태 → 검색 결과 카드 → 영상 링크 클릭을 브라우저에서 시연 |
+| FR-11 | 웹 UI | 질문 입력 → 제출 → 진행 상태 → 검색 결과 카드 → 영상 링크 클릭을 브라우저에서 시연. 대화형 3단 UI, 브라우저 검색 기록, 인용 cue 앞뒤 자막, 후속 질문(`history/exclude`)은 ADR-0010 |
 | FR-12 | FastAPI + SSE 백엔드 | 질문을 POST로 받고 구조화된 SSE 이벤트를 순차 전달하며 완료/오류 이벤트 처리 |
 | FR-13 | SSE 프런트엔드 | 진행 단계 `routing/searching/validating/replanning` 표시, 결과 카드 렌더링, 오류 표시 |
 | FR-14 | 결과 신뢰성 | 검증 전 답변 초안은 스트리밍하지 않음; 근거 부족이면 `not_found`/`unsupported`로 종료 |

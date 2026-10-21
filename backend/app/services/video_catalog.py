@@ -40,3 +40,13 @@ class Catalog:
         if video_id not in self.videos:
             raise ValueError("Unknown video ID")
         return [c for c in self.cues[video_id] if c.start_seconds < start + window and c.end_seconds > start]
+
+    def neighbors(self, video_id: str, cue_id: str, before: int, after: int):
+        """Cues around `cue_id` from the same video, clamped at the video boundaries."""
+        if video_id not in self.videos:
+            raise ValueError("Unknown video ID")
+        cues = self.cues[video_id]
+        index = next((i for i, c in enumerate(cues) if c.cue_id == cue_id), None)
+        if index is None:
+            raise ValueError("Unknown cue ID")
+        return cues[max(0, index - before): index + after + 1]

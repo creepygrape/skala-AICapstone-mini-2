@@ -105,6 +105,8 @@ npm --prefix frontend run build
 
 테스트에는 합성 자료를 이용한 실제 stdio MCP·LangGraph·JSON API 연결이 포함됩니다. 로컬 실제 corpus 검사는 파일이 없으면 skip합니다. 외부 자막은 배포하지 않으므로 제3자는 동일한 실제 corpus 평가를 즉시 재현할 수 없습니다.
 
+UI는 대화형 3단 구성(기록 사이드바 / 대화 / 장면 패널)이며 검색 기록은 이 브라우저의 localStorage에만 저장됩니다(ADR-0010). 후속 질문 맥락(`history/exclude`)은 에이전트 모드(`WISH_AGENT_ENABLED=1`)에서만 적용됩니다.
+
 브라우저 smoke 검증은 API와 Vue를 실행한 후 별도 Chrome CDP 포트 9223에서 `scripts/browser_smoke.py`를 사용합니다. 결과 화면은 `/private/tmp/wish-finder-day1.png`에 저장됩니다.
 
 ## 현재 한계

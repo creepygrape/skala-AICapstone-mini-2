@@ -26,6 +26,8 @@ logger = logging.getLogger('wish_finder.agent')
 class FinderState(TypedDict, total=False):
     request_id: str
     user_query: str
+    history: list[dict]
+    exclude: list[str]
     intent: Literal['scene_search', 'speaker_query', 'unsupported', 'chat']
     query: str
     queries: list[str]
@@ -138,16 +140,23 @@ class FinderAgent:
         return await self.tool_call(self.session,name,arguments,schema)
 
     async def _router(self, state, stats):
-        route = await self._llm(stats,'route',state['user_query'])
+        history = state.get('history')
+        args = (state['user_query'],history) if history else (state['user_query'],)
+        route = await self._llm(stats,'route',*args)
         stats.intent = route.intent
         query = SearchRequest(query=route.search_query).query
         stats.note('router', intent=route.intent, query=query)
-        return {'intent':route.intent,'query':query,'queries':[query]}
+        update = {'intent':route.intent,'query':query,'queries':[query]}
+        if history and route.intent in {'scene_search','speaker_query'}:
+            # A follow-up is judged against its self-contained rewrite, not the bare "another one".
+            update['user_query'] = query
+        return update
 
     async def _search(self, state, stats):
         stats.search_attempts += 1
         reply = await self._tool(stats,'search_transcripts',
-            {'query':state['query'],'mode':self.mode,'top_k':3},SearchReply)
+            {'query':state['query'],'mode':self.mode,
+             'top_k':min(3+len(state.get('exclude',[])),20)},SearchReply)
         if stats.trace is not None:
             stats.note('search', attempt=state.get('attempt',0), query=state['query'], candidates=[
                 {'rank':i, 'video_id':c.chunk.video_id, 'start':c.chunk.start_seconds,
@@ -160,12 +169,17 @@ class FinderAgent:
         async def counted(name, arguments, schema):
             return await self._tool(stats,name,arguments,schema)
         results, _, timing, contexts = await ground_candidates(state['reply'],self.metadata,counted)
+        exclude = set(state.get('exclude',[]))
+        shown = [r for r in results if evidence_key(r) in exclude]
+        if exclude:
+            # Already shown in this conversation: dropped, not a rejected/unsupported candidate.
+            results = [r for r in results if evidence_key(r) not in exclude][:3]
         stats.latest_grounded = results
         stats.timing.update(timing)
         stats.note('context', grounded=[evidence_key(r) for r in results],
                    rejected=len(state['reply'].candidates)-len(results))
         return {'grounded':results,'contexts':contexts,'timing':{**state.get('timing',{}),**timing},
-                'round_all_rejected':bool(state['reply'].candidates) and not results}
+                'round_all_rejected':bool(state['reply'].candidates) and not results and not shown}
 
     async def _verification(self, state, stats):
         # Do not send invalid/ungrounded candidates to the semantic model.
@@ -349,7 +363,7 @@ class FinderAgent:
         except OSError:
             logger.warning('agent_trace_failed request_id=%s',record['request_id'])
 
-    async def run(self, query, *, request_id=None,
+    async def run(self, query, *, request_id=None, history=None, exclude=None,
                   progress: Callable[[str,dict],Awaitable[None]] | None = None):
         query = SearchRequest(query=query).query
         request_id = request_id or str(uuid4())
@@ -365,7 +379,7 @@ class FinderAgent:
             with tracing_context(**self._tracing(request_id)):
                 async with asyncio.timeout(self.timeout):
                     state = await self.graph.ainvoke({'request_id':request_id,'user_query':query,
-                        'attempt':0,'warnings':[],'timing':{},'deadline':started+self.timeout},
+                        'history':history or [],'exclude':exclude or [],'attempt':0,'warnings':[],'timing':{},'deadline':started+self.timeout},
                         config={'configurable':{'stats':stats},'recursion_limit':24})
             record = self._emit(request_id,stats,started,state,None)
             return state['response'], record

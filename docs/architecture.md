@@ -39,7 +39,7 @@ flowchart TB
 
 | 계층 | 제안 | 근거/제약 |
 |---|---|---|
-| Frontend | Vue 3 + Vite, 단일 페이지 | 결과 카드·상태 UI 구현 편의. 복잡한 컴포넌트 라이브러리는 제외 |
+| Frontend | Vue 3 + Vite, 단일 페이지(대화형 3단: 기록/대화/장면 패널, ADR-0010) | 결과 카드·상태 UI 구현 편의. 복잡한 컴포넌트 라이브러리는 제외. 기록은 브라우저 localStorage |
 | Backend | Python 3.11+, FastAPI, Pydantic | API 계약, 비동기 SSE, LangGraph와 일관된 런타임 |
 | Graph | LangGraph | 조건 라우팅, 재검색 상한, 상태 추적 |
 | Agent 역할 | Search Agent, Verification Agent, Supervisor | 각 역할과 출력 계약 구분. 단순 노드와 독립 sub-agent를 혼동하지 않기 |

@@ -8,6 +8,7 @@ function fakeYT() {
     constructor(target, options) { this.options = options; this.events = options.events; instances.push(this) }
     seekTo(at, allow) { calls.push(['seekTo', at, allow]) }
     playVideo() { calls.push(['playVideo']) }
+    cueVideoById(options) { calls.push(['cue', options]) }
     destroy() { calls.push(['destroy']) }
   }
   return { YT: { Player }, calls, instances }
@@ -25,6 +26,17 @@ describe('createScenePlayer', () => {
     expect(fake.calls).toEqual([['seekTo', 250, true], ['playVideo']])
   })
 
+  it('moves without playing when play is false (always re-cued)', () => {
+    const fake = fakeYT()
+    const scene = make(fake)
+    fake.instances[0].events.onReady()
+    expect(scene.seek(40, false)).toBe(true)
+    expect(fake.calls).toEqual([['cue', { videoId: '1HJgbE66GI4', startSeconds: 40 }]])
+    fake.calls.length = 0
+    fake.instances[0].events.onStateChange({ data: 1 })
+    expect(scene.seek(50, false)).toBe(true)  // even while playing: re-cued, never seekTo/play
+    expect(fake.calls).toEqual([['cue', { videoId: '1HJgbE66GI4', startSeconds: 50 }]])
+  })
   it.each([100, 5, 153, 2])('refuses to seek after recoverable error %i so the caller falls back', code => {
     const fake = fakeYT()
     const scene = make(fake)
