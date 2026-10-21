@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { timestamp, parseEventFrame, searchScenes } from './search'
+import { timestamp, parseEventFrame, searchScenes, formatElapsed, groupByVideo } from './search'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -16,6 +16,16 @@ function responseFrom(chunks, { ok = true, body } = {}) {
 describe('search client', () => {
   it('uses cue seconds without carrying a URL offset', () => {
     expect(timestamp(189.606)).toBe('3:09')
+  })
+  it('groups results by video keeping rank order', () => {
+    const groups = groupByVideo([{ video_id:'a', title:'A', url:'u1', start_seconds:9 }, { video_id:'b', title:'B', url:'u2', start_seconds:1 }, { video_id:'a', title:'A', url:'u3', start_seconds:2 }])
+    expect(groups.map(g => g.video_id)).toEqual(['a', 'b'])
+    expect(groups[0].items.map(i => i.start_seconds)).toEqual([9, 2])
+    expect(groups[0].url).toBe('u1')
+  })
+  it('formats stage durations', () => {
+    expect(formatElapsed(40)).toBe('<0.1초')
+    expect(formatElapsed(1234)).toBe('1.2초')
   })
   it('parses CRLF and multiline data fields', () => {
     expect(parseEventFrame('event: progress\r\ndata: {"message":\r\ndata: "검색 중"}')).toEqual({

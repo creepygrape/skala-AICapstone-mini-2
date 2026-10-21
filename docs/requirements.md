@@ -103,8 +103,8 @@ MCP 구현은 공식 Python SDK 2.x (`mcp>=2,<3`)의 `MCPServer`를 사용한다
 
 1. **Header**: WISH FINDER, 등록된 영상 수 또는 데이터 기준 안내.
 2. **Question Composer**: 한국어 자연어 질문 입력, 예시 질문 칩 3개, 검색 버튼(로딩 시 중복 제출 방지).
-3. **Live Progress**: SSE로 수신한 진행 상태 단계 노출. 숨겨진 내부 추론 내용은 표시하지 않음.
-4. **Result Cards**: 제목, 시작 시간, 짧은 실제 원문, 한국어 맥락 요약, 근거 종류(`dialogue` / `editorial` / `mixed`), '해당 장면 보기' 링크.
+3. **Live Progress**: SSE로 수신한 진행 상태 단계를 덮어쓰지 않고 누적 노출하며 단계별 소요 시간을 표시. 숨겨진 내부 추론 내용은 표시하지 않음.
+4. **Result Cards**: 제목, 시작 시간, 짧은 실제 원문, 한국어 맥락 요약, 근거 종류(`dialogue` / `editorial` / `mixed`), 페이지 내 YouTube 임베드 재생('여기서 재생')과 보조 'YouTube에서 열기' 링크(임베드 차단 시 폴백).
 5. **Fallback**: 검색 결과 없음, 화자 미확인, 일부 도구 오류 등의 상태를 명시.
 6. **Accessibility**: 텍스트 대비, 키보드 버튼 작동, 외부 링크 안내.
 

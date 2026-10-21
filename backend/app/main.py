@@ -87,7 +87,7 @@ async def videos():
     return {"videos":[video.model_dump() for video in app.state.videos.values()]}
 
 
-async def run_search(query: str, request_id: str, progress=None) -> SearchResponse:
+async def run_search(query: str, request_id: str, progress=None, timings=None) -> SearchResponse:
     """Run the shared JSON/SSE pipeline; raise only safe SearchFailure errors."""
     started = time.monotonic()
     try:
@@ -95,7 +95,9 @@ async def run_search(query: str, request_id: str, progress=None) -> SearchRespon
             kwargs = {'request_id': request_id}
             if progress is not None:
                 kwargs['progress'] = progress
-            response, _ = await app.state.agent.run(query, **kwargs)
+            response, record = await app.state.agent.run(query, **kwargs)
+            if timings is not None:
+                timings['stage_ms'] = record.get('stage_tail_ms', {})
             return response
         mode = 'keyword' if os.getenv('WISH_KEYWORD_ONLY') == '1' else 'hybrid'
         execution = await search_and_verify(app.state.session, query, mode,
@@ -146,19 +148,29 @@ async def search_stream(request: SearchRequest):
 
     owner = StreamOwner(release, getattr(app.state, 'search_tasks', None))
 
+    started = time.monotonic()
+    timings = {}
+
+    def elapsed_ms():
+        return int((time.monotonic()-started)*1000)
+
     async def progress(event, payload):
         await queue.put((event, {'request_id':request_id,
-            'message':MESSAGES[event], **payload}))
+            'message':MESSAGES[event], **payload, 'elapsed_ms':elapsed_ms()}))
 
     async def execute():
         try:
-            response = await run_search(request.query, request_id, progress)
+            response = await run_search(request.query, request_id, progress, timings)
             await queue.put(('result', response.model_dump()))
-            await queue.put(('done', {'request_id':request_id, 'status':response.status}))
+            done = {'request_id':request_id, 'status':response.status, 'elapsed_ms':elapsed_ms()}
+            if timings.get('stage_ms'):
+                done['stage_ms'] = timings['stage_ms']
+            await queue.put(('done', done))
         except SearchFailure as exc:
             code, message = public_error(exc)
             await queue.put(('error', {'request_id':request_id, 'code':code, 'message':message}))
-            await queue.put(('done', {'request_id':request_id, 'status':'error'}))
+            await queue.put(('done', {'request_id':request_id, 'status':'error',
+                'elapsed_ms':elapsed_ms()}))
 
     async def events():
         owner.start(execute())

@@ -422,3 +422,26 @@ def test_stopped_replan_does_not_announce_another_attempt(tmp_path,same_query,bu
     assert response.search_attempts == len(session.queries) == 1
     assert not any(event=='replanning' for event,_ in events)
     assert [payload['attempt'] for event,payload in events if event=='searching']==[0]
+
+
+class SlowRewriteModel(ScriptedModel):
+    async def rewrite(self, query, previous, feedback):
+        await asyncio.sleep(0.3)
+        return await super().rewrite(query, previous, feedback)
+
+
+def test_progress_stage_ms_attributes_rewrite_time_to_replanning(tmp_path):
+    agent,_=make_agent(tmp_path,SlowRewriteModel(('irrelevant','relevant')))
+    events=[]
+    async def progress(event,payload): events.append((event,payload))
+    _,record=asyncio.run(agent.run('장면',progress=progress))
+    names=[event for event,_ in events]
+    assert names==['routing','searching','validating','replanning','searching','validating']
+    replanning=dict(events)['replanning']['stage_ms']
+    assert replanning['replan']>=250
+    # The slow rewrite must not leak into the validating work reported on the same event.
+    assert replanning.get('context',0)+replanning.get('verification',0)<250
+    assert events[0][1]['stage_ms']=={} and set(events[1][1]['stage_ms'])=={'router'}
+    # The next searching event does not repeat the rewrite time.
+    assert 'replan' not in events[4][1]['stage_ms']
+    assert {'context','verification','finalize'} <= set(record['stage_tail_ms'])

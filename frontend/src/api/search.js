@@ -3,6 +3,20 @@ export function timestamp(seconds) {
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`
 }
 
+export function formatElapsed(ms) {
+  return ms < 100 ? '<0.1초' : `${(ms / 1000).toFixed(1)}초`
+}
+
+// Group ranked results by video, keeping rank order: the first item is the top-ranked moment.
+export function groupByVideo(results) {
+  const groups = new Map()
+  for (const item of results) {
+    if (!groups.has(item.video_id)) groups.set(item.video_id, { video_id: item.video_id, title: item.title, url: item.url, items: [] })
+    groups.get(item.video_id).items.push(item)
+  }
+  return [...groups.values()]
+}
+
 function httpMessage(body) {
   const detail = body?.detail
   return typeof detail === 'string' ? detail : detail?.message || '검색을 완료하지 못했습니다. 다시 시도해 주세요.'

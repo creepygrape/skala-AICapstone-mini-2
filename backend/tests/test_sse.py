@@ -44,6 +44,9 @@ def test_agent_sse_orders_progress_before_validated_result(monkeypatch,tmp_path)
         assert result['status']=='found' and result['results'][0]['speaker'] is None
         assert result['results'][0]['url'].endswith('&t=3s')
         assert not main.app.state.busy
+        elapsed=[data['elapsed_ms'] for name,data in events if name!='result']
+        assert len(elapsed)==4 and elapsed==sorted(elapsed)
+        assert 'elapsed_ms' not in result
 
 
 def test_agent_sse_replanning_attempts_are_bounded(monkeypatch,tmp_path):
