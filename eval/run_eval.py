@@ -1,7 +1,8 @@
-"""Run A/B through the product search service; never evaluate draft gold.
+"""Run A/B (product search service) and C (real FinderAgent); never evaluate draft gold.
 
 All relative CLI paths are project-root relative. Output stays in eval/private/.
-Final C requires the actual Day 2 Agent and is not measured here.
+--systems A,B,C adds the Agent. --control adds C-ko: the real Agent with the same raw
+Korean starting query A/B use (Router intent kept, Router query replaced).
 """
 
 import argparse
@@ -16,10 +17,13 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from backend.app.agent.graph import FinderAgent
+from backend.app.agent.model import OllamaModel
 from backend.app.mcp.client import connect
 from backend.app.schemas import MetadataReply, SearchResponse
 from backend.app.services.search import SearchFailure, call_tool, search_and_verify
 from backend.app.services.video_catalog import Catalog, ROOT, resolve_manifest
+from eval.agent_runner import RouteProbe, evaluate_agent_question
 from eval.dataset import load_questions, validate_source_labels
 from eval.metrics import answerability_metrics, scene_metrics, summarize
 from eval.paths import private_output, project_path, write_private_json
@@ -55,11 +59,34 @@ async def evaluate_question(session, question, query, mode, metadata, *, conditi
     }
 
 
+def verify_gold_approval(dataset, rows):
+    """Private gold must match the recorded human approval byte-for-byte."""
+    if not any(r.split=='gold' for r in rows) or not dataset.is_relative_to(ROOT/'eval/private'):
+        return None
+    approval_path = ROOT/'eval/private/gold-approval.json'
+    approval = json.loads(approval_path.read_text(encoding='utf-8')) if approval_path.exists() else None
+    if not approval or approval.get('approved_by')!='user':
+        raise ValueError('Private gold has no recorded human approval')
+    if approval['gold_sha256']!=hashlib.sha256(dataset.read_bytes()).hexdigest() or \
+            set(approval['approved_ids'])!={r.id for r in rows if r.split=='gold'}:
+        raise ValueError('Gold changed after human approval; re-review before evaluation')
+    return {'approved_at':approval['approved_at'], 'approved_count':approval['approved_count'],
+            'pending_excluded':approval.get('pending_ids',[])}
+
+
 async def run(args):
     dataset = project_path(args.dataset)
     rows = load_questions(dataset)
     if any(r.split=='gold_draft' or (r.split=='gold' and r.label_status!='accepted') for r in rows):
         raise ValueError('Draft gold is reserved: review/freeze labels before evaluation')
+    approval = verify_gold_approval(dataset, rows)
+    systems = [x.strip() for x in (getattr(args,'systems',None) or 'A,B').split(',')]
+    if not set(systems)<={'A','B','C'}:
+        raise ValueError('systems must be a subset of A,B,C')
+    control = bool(getattr(args,'control',False))
+    if control and 'C' not in systems:
+        raise ValueError('--control needs system C')
+    use_agent = 'C' in systems
     output_path = private_output(args.output)
     if output_path.exists():
         raise ValueError('Output already exists; choose a new path to preserve prior results')
@@ -74,10 +101,21 @@ async def run(args):
         if len(items)!=len(rows) or {x['id'] for x in items}!={r.id for r in rows}:
             raise ValueError('Frozen rewrite IDs must match dataset exactly once')
         rewrites = {x['id']:x['query_en'] for x in items}
+    modes = [(s_,m) for s_,m in [('A','keyword'),('B','hybrid')] if s_ in systems]
     conditions = ['raw_ko'] + (['frozen_model_en'] if rewrites else [])
-    tasks = [{'question':row, 'query':row.query if condition=='raw_ko' else rewrites[row.id],
-              'condition':condition, 'system':system, 'mode':mode}
-             for condition in conditions for system,mode in [('A','keyword'),('B','hybrid')] for row in rows]
+    tasks = []
+    if use_agent:  # Native C first: its Router queries become the identical A/B starting query.
+        tasks += [{'kind':'agent','question':row,'condition':'router_en','system':'C','override':None}
+                  for row in rows]
+    tasks += [{'kind':'search','question':row, 'query':row.query if condition=='raw_ko' else rewrites[row.id],
+               'condition':condition, 'system':system, 'mode':mode}
+              for condition in conditions for system,mode in modes for row in rows]
+    if control:
+        tasks += [{'kind':'agent','question':row,'condition':'raw_ko','system':'C-ko','override':row.query}
+                  for row in rows]
+    if use_agent:
+        tasks += [{'kind':'search','question':row,'query':None,'condition':'router_en','system':system,
+                   'mode':mode} for system,mode in modes for row in rows]
     corpus = [{'video_id':v.video_id,
                'sha256':hashlib.sha256((ROOT/v.transcript_file).read_bytes()).hexdigest()}
               for v in catalog.videos.values()]
@@ -85,9 +123,15 @@ async def run(args):
         'schema_version':2, 'created_at':datetime.now(timezone.utc).isoformat(), 'corpus':corpus,
         'dataset_sha256':hashlib.sha256(dataset.read_bytes()).hexdigest(),
         'rewrite_sha256':hashlib.sha256(rewrite_path.read_bytes()).hexdigest() if rewrite_path else None,
-        'preprocessing':'SearchRequest: length validation then trim/nonblank validation',
+        'preprocessing':{
+            'A/B raw_ko':'SearchRequest only: length validation then trim/nonblank',
+            'A/B frozen_model_en':'stored model-written English string, identical for A and B',
+            'C router_en':'Agent Router (LLM) writes the English first query, then bounded replans; A/B router_en reuse that exact first query',
+            'C-ko control':'real Agent, real Router intent, but first query replaced by the raw Korean text A/B raw_ko use; replans still LLM-written',
+            'comparability':'A/B raw_ko vs C differ in preprocessing; use router_en and C-ko rows for like-for-like starting queries'},
+        'gold_approval':approval, 'agent_model':None,
         'metric_policy':'Same video and floor(link time) in accepted interval ±10s',
-        'semantic_verification':False, 'systems_not_measured':['C'], 'mcp_startup_seconds':None,
+        'semantic_verification':use_agent, 'systems_not_measured':[x for x in 'ABC' if x not in systems], 'mcp_startup_seconds':None,
         'video_timing':{v.video_id:'sampled' if v.timing_verified else 'unverified' for v in catalog.videos.values()},
         'timing_scope':'Manifest flags mean sampled user checks, never exhaustive cue validation',
         'records':[], 'run_error':None,
@@ -107,6 +151,7 @@ async def run(args):
     env.update(HF_HUB_OFFLINE='1',TRANSFORMERS_OFFLINE='1',TOKENIZERS_PARALLELISM='false',
                WISH_MANIFEST=str(manifest),WISH_KEYWORD_ONLY='0')
     started = time.monotonic()
+    model = None
     try:
         async with connect(env=env) as session:
             output['mcp_startup_seconds'] = round(time.monotonic()-started,3)
@@ -114,9 +159,27 @@ async def run(args):
                         for vid in catalog.videos}
             output['video_timing'] = {vid:'sampled' if v.timing_verified else 'unverified'
                                       for vid,v in metadata.items()}
+            agent = probe = None
+            if use_agent:
+                model = OllamaModel(os.getenv('WISH_LLM_MODEL','qwen3:8b'))
+                await model.ready()
+                output['agent_model'] = model.model
+                probe = RouteProbe(model)
+                agent = FinderAgent(session,metadata,probe,mode='hybrid',
+                                    log_path=private_output('eval/private/agent-eval.jsonl'))
+            router_queries = {}
             for task in tasks:
-                record = await evaluate_question(session,task['question'],task['query'],task['mode'],metadata,
-                                                  condition=task['condition'],system=task['system'])
+                if task['kind']=='agent':
+                    record = await evaluate_agent_question(agent,probe,task['question'],condition=task['condition'],
+                                                           system=task['system'],override=task['override'])
+                    if task['system']=='C' and record['router_first_query']:
+                        router_queries[task['question'].id] = record['router_first_query']
+                else:
+                    query = task['query'] or router_queries.get(task['question'].id)
+                    if query is None:
+                        continue  # stays in not_run: Router produced no query for this question
+                    record = await evaluate_question(session,task['question'],query,task['mode'],metadata,
+                                                      condition=task['condition'],system=task['system'])
                 output['records'].append(record)
                 if record['error'] and record['error']['fatal']:
                     output['run_error'] = record['error']['code']
@@ -131,6 +194,8 @@ async def run(args):
         # raw messages, source text, credentials or local peer traceback paths.
         output['run_error'] = exc.code if isinstance(exc,SearchFailure) else 'session_failure'
     finally:
+        if model is not None:
+            await model.close()
         save()
     print(json.dumps({'complete':output['complete'],'summary':output['summary'],
                       'mcp_startup_seconds':output['mcp_startup_seconds'],
@@ -143,6 +208,8 @@ def main():
     parser.add_argument('--dataset',type=Path,required=True)
     parser.add_argument('--rewrites',type=Path)
     parser.add_argument('--manifest',type=Path)
+    parser.add_argument('--systems',default='A,B',help='comma list from A,B,C')
+    parser.add_argument('--control',action='store_true',help='add C-ko same-starting-query control')
     parser.add_argument('--output',type=Path,default=Path('eval/private/day1-baselines.review2.json'))
     output = asyncio.run(run(parser.parse_args()))
     if not output['complete'] or any(r['status']=='error' for r in output['records']):
