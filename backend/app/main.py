@@ -47,7 +47,10 @@ async def lifespan(app):
     model = None
     telemetry = None
     env = {key:value for key,value in os.environ.items() if key.startswith('WISH_')}
-    env.update(HF_HUB_OFFLINE="1",TRANSFORMERS_OFFLINE="1",TOKENIZERS_PARALLELISM="false")
+    # The MCP child only receives these variables: force UTF-8 so progress bars (U+2588) and
+    # Korean text do not hit the Windows cp949 default and kill the subprocess.
+    env.update(HF_HUB_OFFLINE="1",TRANSFORMERS_OFFLINE="1",TOKENIZERS_PARALLELISM="false",
+               PYTHONUTF8="1",PYTHONIOENCODING="utf-8")
     # Enter/exit transport and session in this lifespan task, not a child wait_for task.
     async with connect(env=env) as session:
         app.state.session = session
