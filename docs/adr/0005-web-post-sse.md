@@ -44,3 +44,7 @@ JSON/SSE는 공통 실행 함수로 검색 분기·오류 변환·로그를 공�
 검증 근거: 실제 ASGI 즉시 disconnect·실행 중 disconnect·전송 실패, 지연 정리·제한 시간 초과 후 busy 유지·종료 후 재검색, 기본 검색 도구/단계 순서와 JSON/SSE 오류 일치 회귀 테스트를 추가했다. 실행 명령과 실제 결과는 reports/day2-sse-web.md에 기록한다.
 
 재검토 조건: 정리 시간 초과가 반복되거나 ASGI spec 2.4 서버로 바꾸는 경우. 후자는 긴 모델 대기 중 disconnect 감지가 다음 send까지 늦어질 수 있어 별도 감지 또는 heartbeat를 검토한다.
+
+## 진행 이벤트에 elapsed_ms 추가 (2026-10-21, 시연 피드백)
+
+배경: 진행 문구가 덮어써져 단계 이력과 소요 시간을 볼 수 없었다. 결정: routing/searching/validating/replanning/done payload에 가산 필드 `elapsed_ms`(서버 monotonic 기준 요청 시작 후 경과)를 추가한다. 프론트는 이벤트를 누적하고 다음 이벤트와의 차이로 단계 시간을 계산한다. 대안: 브라우저 수신 시각 차이(네트워크·버퍼링 영향으로 부정확) — 서버 값이 없을 때만 폴백. 기존 필드·이벤트 이름·순서는 불변이고 `result`에는 추가하지 않는다(검증 전 결과 미노출 원칙 유지). 검증: test_sse.py의 elapsed_ms 단조 증가 단언, App.test.js 누적 렌더 테스트. 재검토: 단계 내부 세부(LLM/Tool 호출별) 시간이 필요해질 때.

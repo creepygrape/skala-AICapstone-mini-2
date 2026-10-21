@@ -51,7 +51,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m uvicorn backend.app.
 npm --prefix frontend run dev -- --port 5173
 ```
 
-브라우저에서 `http://127.0.0.1:5173/`에 접속합니다. 백엔드 lifespan이 실제 MCP 서버를 시작하고 종료합니다. MCP 서버만 따로 실행하려면 `.venv/bin/python -m backend.app.mcp.server`를 사용합니다(stdout은 프로토콜 전용).
+브라우저에서 `http://localhost:5173/`에 접속합니다(`127.0.0.1`로 접속하면 일부 영상의 페이지 내 재생이 막힐 수 있습니다). 백엔드 lifespan이 실제 MCP 서버를 시작하고 종료합니다. MCP 서버만 따로 실행하려면 `.venv/bin/python -m backend.app.mcp.server`를 사용합니다(stdout은 프로토콜 전용).
 
 ### Day 2 JSON Agent 실행
 

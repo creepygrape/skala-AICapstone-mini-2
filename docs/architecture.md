@@ -161,10 +161,10 @@ class FinderState(TypedDict, total=False):
 
 ```text
 event: routing
-data: {"request_id":"req-123","message":"질문 유형을 확인하고 있어요."}
+data: {"request_id":"req-123","message":"질문 유형을 확인하고 있어요.","elapsed_ms":12}
 
 event: searching
-data: {"request_id":"req-123","attempt":0,"message":"관련 장면을 검색 중이에요."}
+data: {"request_id":"req-123","attempt":0,"message":"관련 장면을 검색 중이에요.","elapsed_ms":340}
 
 event: validating
 data: {"request_id":"req-123","message":"원문과 시간을 확인 중이에요."}
@@ -176,12 +176,13 @@ event: result
 data: {"request_id":"req-123","status":"found","results":[{"video_id":"1HJgbE66GI4","start_seconds":189,"end_seconds":191,"evidence_text":"(RIKU chose RIKU)","speaker":null,"url":"https://www.youtube.com/watch?v=1HJgbE66GI4&t=189s"}]}
 
 event: done
-data: {"request_id":"req-123","status":"found"}
+data: {"request_id":"req-123","status":"found","elapsed_ms":1850}
 
 ```
 
 - POST SSE이므로 `EventSource` 단독 사용하지 않고 Vue 프론트의 `fetch` + `ReadableStream` 파서를 사용.
 - 이벤트를 임의 JSON 청크 단위로 파싱하면 분할 수신에서 오류가 생김. **`\n\n` 프레임 경계 및 멀티라인 data 지원**이 중요.
+- 진행 이벤트와 `done`의 `elapsed_ms`(요청 시작 기준 서버 경과 시간)로 UI가 단계별 소요 시간을 계산한다. `result`에는 넣지 않는다.
 - 상태 이벤트는 작업 결과 요약만; chain-of-thought나 미검증 자연어 초안을 보내지 않는다.
 - 실제 error는 `event:error` + `done`으로 매핑하며, 연결이 끊긴 경우에는 클라이언트가 안전하게 종료 상태를 표시.
 - 링크 생성 시 허용 도메인/정확한 video ID/초 단위 시간 검증. 공개 동영상 URL을 조합하되 존재하지 않는 video ID를 생성하지 않음.

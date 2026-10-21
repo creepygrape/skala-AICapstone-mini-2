@@ -48,10 +48,10 @@ async def main():
             raise TimeoutError(expression)
 
         await command('Page.enable')
-        await command('Page.navigate',{'url':'http://127.0.0.1:5173/'})
+        await command('Page.navigate',{'url':'http://localhost:5173/'})
         await wait_for("document.querySelector('#query') !== null",10)
         await evaluate("window.__wishResults=[]; const originalFetch=window.fetch; window.fetch=async (...args) => { const response=await originalFetch(...args); if(String(args[0]).includes('/search/stream')) response.clone().text().then(text => { for(const frame of text.split('\\n\\n')) if(frame.startsWith('event: result')) window.__wishResults.push(JSON.parse(frame.split('data: ')[1])); }).catch(() => {}); return response; }")
-        await evaluate("window.__wishProgress=[]; new MutationObserver(() => { const n=document.querySelector('[role=status]'); if(n) window.__wishProgress.push(n.textContent) }).observe(document.body,{subtree:true,childList:true,characterData:true})")
+        await evaluate("window.__wishProgress=[]; new MutationObserver(() => { const n=document.querySelector('.steps'); if(n) window.__wishProgress.push(n.textContent) }).observe(document.body,{subtree:true,childList:true,characterData:true})")
         await evaluate("document.querySelector('#query').value='리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면'; document.querySelector('#query').dispatchEvent(new Event('input',{bubbles:true}));")
         await asyncio.sleep(.1)
         await evaluate("document.querySelector('form').requestSubmit()")
@@ -68,6 +68,11 @@ async def main():
         assert any('질문 유형' in item for item in progress),progress
         assert any('검색 중' in item for item in progress),progress
         assert any('원문과 시점' in item for item in progress),progress
+        # steps accumulate: the final snapshot keeps earlier stages with durations
+        assert '질문 유형 파악 완료' in progress[-1] and '소요' in progress[-1],progress[-1]
+        await wait_for("document.querySelector('article iframe') !== null",15)
+        src = await evaluate("document.querySelector('article iframe').src")
+        assert 'youtube.com/embed/1HJgbE66GI4' in src and 'start=189' in src, src
 
         await evaluate("document.querySelector('#query').value='료칸이 뭐냐고 물었던 사람은 누구야? 그 장면 찾아줘'; document.querySelector('#query').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('form').requestSubmit()")
         await wait_for("document.querySelector('article') !== null && !document.querySelector('button[type=submit]').disabled")

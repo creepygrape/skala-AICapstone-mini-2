@@ -146,19 +146,26 @@ async def search_stream(request: SearchRequest):
 
     owner = StreamOwner(release, getattr(app.state, 'search_tasks', None))
 
+    started = time.monotonic()
+
+    def elapsed_ms():
+        return int((time.monotonic()-started)*1000)
+
     async def progress(event, payload):
         await queue.put((event, {'request_id':request_id,
-            'message':MESSAGES[event], **payload}))
+            'message':MESSAGES[event], **payload, 'elapsed_ms':elapsed_ms()}))
 
     async def execute():
         try:
             response = await run_search(request.query, request_id, progress)
             await queue.put(('result', response.model_dump()))
-            await queue.put(('done', {'request_id':request_id, 'status':response.status}))
+            await queue.put(('done', {'request_id':request_id, 'status':response.status,
+                'elapsed_ms':elapsed_ms()}))
         except SearchFailure as exc:
             code, message = public_error(exc)
             await queue.put(('error', {'request_id':request_id, 'code':code, 'message':message}))
-            await queue.put(('done', {'request_id':request_id, 'status':'error'}))
+            await queue.put(('done', {'request_id':request_id, 'status':'error',
+                'elapsed_ms':elapsed_ms()}))
 
     async def events():
         owner.start(execute())
