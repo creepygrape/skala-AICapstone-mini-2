@@ -1,6 +1,6 @@
 # WISH FINDER — NCT WISH 장면 찾기 AI Agent
 
-> **현재 상태:** Day 1 기본 검색 웹 구현. 실제 MCP stdio + BM25/Dense/RRF + 원문 cue 검증이 동작합니다. 의미 검증 Graph·재검색·POST SSE는 Day 2 작업입니다.
+> **현재 상태:** Day 1 검색 웹 + Day 2 JSON Agent 구현. `WISH_AGENT_ENABLED=1`에서 LangGraph 의미 검증·조건부 최대 2회 재검색을 사용합니다. POST SSE와 웹 진행 상태는 다음 PR 작업입니다.
 
 ## 문제와 목표
 
@@ -53,6 +53,22 @@ npm --prefix frontend run dev -- --port 5173
 
 브라우저에서 `http://127.0.0.1:5173/`에 접속합니다. 백엔드 lifespan이 실제 MCP 서버를 시작하고 종료합니다. MCP 서버만 따로 실행하려면 `.venv/bin/python -m backend.app.mcp.server`를 사용합니다(stdout은 프로토콜 전용).
 
+### Day 2 JSON Agent 실행
+
+기존 Ollama 서버에 `qwen3:8b`가 설치되어 있어야 합니다. 시작 시 설치 여부만 확인하며 모델을 내려받지 않습니다. 기본값은 기존 A/B 검색입니다. Agent를 쓰려면 API를 다음과 같이 실행합니다(기존 API와 동시에 실행하지 마세요).
+
+```sh
+WISH_AGENT_ENABLED=1 WISH_LLM_MODEL=qwen3:8b HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1
+```
+
+같은 `POST /api/search`에 `{"query":"리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면"}`을 보냅니다. `/ready`의 stage가 `agent_json`이면 Graph 경로입니다. Router → MCP 검색 → MCP 문맥/원문 검증 → 의미 판정 → 필요한 경우 재검색 → 응답으로 처리합니다. 화자 질문도 장면을 찾으며 화자 확인 불가를 고지합니다. 시각·인용·화자·한국어 설명은 모델 자유 생성으로 만들지 않습니다.
+
+전체 요청 60초, MCP 도구 30초, LLM 호출 20초이며 검색은 최대 3라운드입니다. 모델 장애·잘못된 구조화 응답·MCP 장애는 503의 안전한 `detail.code`로 반환하고 미검증 결과를 내보내지 않습니다. 의미가 불확실한 후보는 `ambiguous`, 범위 밖/일반 대화는 `unsupported`입니다. 동일 검색어를 반복 생성하면 재검색을 조기 종료합니다.
+
+`logs/agent.jsonl`에 request ID·분류·상태·단계별 시간·호출 수·오류를 기록하며 질문·원문을 넣지 않습니다. LangSmith는 `WISH_LANGSMITH_ENABLED=1`과 키가 모두 있을 때만 같은 요약 메타데이터를 전송합니다. 자동 Graph 원문 추적은 비활성화합니다. 키가 없어도 로컬 로그로 동작합니다. 자유 한국어 장면 요약은 현재 제공하지 않고 검증 상태와 화자 한계를 고정 문구로 표시합니다.
+
+실제 로컬 Agent 시험은 `scripts/agent_smoke.py`로 실행합니다. 다른 Dense API를 먼저 종료해야 하며 결과는 Git 제외인 `eval/private/day2-agent-smoke.json`에 저장합니다. 기존 결과가 있으면 덮어쓰지 않습니다. gold를 사용하지 않는 데모 확인이며 C 전체 정량 평가는 아닙니다.
+
 공개 합성 fixture만 사용하는 keyword 모드는 다음과 같습니다. 이 모드는 다국어 Hybrid/Agent 품질 검증을 대체하지 않습니다.
 
 ```sh
@@ -73,11 +89,11 @@ npm --prefix frontend run build
 
 ## 현재 한계
 
-- Day 1 결과는 검색 후보입니다. 원문·시각의 결정적 검증은 했지만 의미 검증은 아직 없어 `partial`과 `semantic_verification_skipped`를 반환합니다. Final C 성공으로 집계하지 않습니다.
+- 기본 A/B 모드의 결과는 검색 후보이며 `partial`과 `semantic_verification_skipped`를 반환합니다. Agent 모드는 별도 의미 판정을 수행하지만 C 전체 정량 평가는 아직 하지 않았습니다.
 - 한국어 기본 검색은 료칸 질문에서 정답이 2위에 나오는 사례가 있습니다. [Day 1 기록](docs/reports/day1.md)에 실제 관측을 남깁니다.
 - 실제 로컬 manifest의 영상 제목은 공식 YouTube 메타데이터로 확인했습니다. 자막 출처는 사용자 Wave 도구 추출이며, 영상별 3개 시점의 내용 일치를 사용자에게 확인받았습니다. 전체 자막 시각 정확도나 제삼자 재배포 권한까지 확인한 것은 아닙니다.
 - 화자는 항상 미확인입니다. 모델이 화면·음성을 이해한 서비스가 아닙니다.
-- 원본을 반환하는 검색 도구와 의미 검증·최대 2회 재검색·POST SSE의 통합은 Day 2에 마무리합니다.
+- Agent JSON API와 최대 2회 재검색은 구현했습니다. POST SSE·Vue 진행 상태·연결 중단 처리는 다음 PR에서 마무리합니다.
 
 ## PR #1 리뷰 수정
 

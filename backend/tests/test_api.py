@@ -90,7 +90,9 @@ def test_metadata_is_cached_and_tool_errors_stay_503(monkeypatch):
         fail_search=True
         response=client.post('/api/search',json={'query':'RIKU'})
         assert response.status_code==503
-        assert response.json()['detail']['request_id']
+        detail=response.json()['detail']
+        assert detail['request_id']
+        assert '검색 도구' in detail['message']
         assert not app.state.busy
 
 

@@ -1,6 +1,6 @@
 # ADR-0003 — 역할 분리 LangGraph와 조건부 최대 2회 재검색
 
-- 상태: Accepted (사용자 확정, 구현·통합 검증 전)
+- 상태: Accepted (구현·통합 검증 진행 중)
 - 날짜: 2026-10-20
 - 관련 요구사항: FR-06, FR-07, FR-09, FR-14, FR-15
 
@@ -42,3 +42,35 @@ State 주석, 조건부 edge, SSE 진행 상태, 평가의 검색 횟수 기록�
 
 ## 재검토 조건
 두 번째 재검색의 개선 효과가 없거나 지연·메모리·호출 비용이 시연 목표를 해치는 경우 근거를 제시해 재검토한다. 상한·P0 변경은 사용자 승인 후 반영한다.
+
+## Day 2 첫 리뷰 구현 결정 (2026-10-21)
+
+기존 로컬 Ollama qwen3:8b와 httpx로 구조화 JSON을 요청한다. 새 모델·유료 API·adapter는 추가하지 않는다. Router → Search → Context → Verification → Replan/Finalize를 StateGraph로 구성하고 동일 stdio 세션과 결정적 원문 검증을 재사용한다. `WISH_AGENT_ENABLED=1`일 때 기존 JSON API에 연결하며 기본 A/B 경로는 보존한다. SSE는 다음 PR 범위다.
+
+LLM은 의도/검색어와 후보별 관련성만 반환한다. 인용·URL·시각은 코드에서 생성하고 한국어 설명도 검증 상태와 화자 한계를 알리는 고정 문구를 사용한다. 자유 요약보다 표현력은 낮지만 설명문 속 허위 발화자 단정을 줄인다. 자막은 신뢰할 수 없는 데이터로 전달하고 명령으로 따르지 않도록 지시한다. 의미 판정 실패·잘못된 후보 ID·중복 판정은 오류이며 추정 결과를 내보내지 않는다.
+
+MCP 30초, LLM 20초, 전체 60초를 상한으로 한다. 검색 0건·불일치·불확실일 때만 검색어를 바꿔 최대 2회 재검색한다. 같은 검색어는 반복하지 않는다. 도구 오류는 재검색하지 않고 API 503으로 구별한다. 모호한 의미 후보는 마지막에 ambiguous로만 제공하고 확정 결과와 구별한다. speaker_query는 장면 검색을 유지하며 자막만으로 화자를 확인할 수 없다고 고지한다.
+
+요청별 State에 라우팅·실제 라운드·Tool/LLM 호출 수·단계별 시간·오류 코드만 기록한다. 로컬 JSONL에는 질문/원문을 기록하지 않는다. LangSmith는 별도 명시적 opt-in과 키가 있을 때만 메타데이터 요약을 전송해 원문 자동 추적을 피한다. lifespan에서 HTTP 클라이언트·Graph·MCP를 준비하고 종료 시 정리한다.
+
+대안: LangChain adapter 추가는 SDK 호환·의존성 비용 때문에 보류한다. 규칙만으로 의미 판정하는 방법은 P0 의미 검증을 충족하지 못한다. 자유 생성 최종 답변은 화자 환각 위험 때문에 제외한다. 로컬 모델은 지연/번역 오류 가능성이 있으며 15초 목표는 실측으로 확인한다.
+
+검증: 0/1/2회 재검색·조기 종료·중복 검색어·화자/범위 밖·모델 JSON/timeout·MCP 오류·원문 탈락을 합성 테스트하고 실제 stdio Graph/API 연결 및 로컬 모델 개발 질문을 별도 확인한다. gold 초안은 사용하지 않는다. C 전체 평가는 Day 3 범위다.
+
+## PR #3 리뷰 반영 — 근거 보존과 라운드 상태 (2026-10-21)
+
+재검색은 rewrite와 다음 검색·검증을 위한 최소 25초가 남았을 때만 시작한다. 검증 직후와 rewrite 직후 모두 남은 예산을 확인한다. 부족하면 `replan_budget_exhausted`로 Finalize한다. 전체 timeout이 발생해도 이전 라운드에서 의미상 uncertain으로 판정된 근거는 `ambiguous`, 원문만 검증된 현재 후보는 `partial`로 보존한다. 의미 검증을 마치지 못한 partial은 C 성공으로 세지 않는다. 근거가 전혀 없으면 기존처럼 503 timeout이다.
+
+`evidence_rejected`와 `round_all_rejected`는 현재 라운드에서만 상태 판정에 사용한다. 마지막 라운드의 후보가 모두 원문 검증에 실패하면 `unsupported`, 정상적으로 검색 결과/관련 근거가 없으면 `not_found`다. 과거 라운드의 탈락 경고는 이후 found/not_found 응답에 누적하지 않는다. 이 규칙은 unanswered/unsupported 지표의 라운드 오염을 막는다.
+
+모델 timeout·응답 형식/근거 ID 오류가 원문 검증 이후 발생하면 `partial`과 `semantic_model_error`/`semantic_verification_skipped`를 반환한다. 이전 uncertain 판정이 있으면 `ambiguous`를 우선한다. Router 이전 모델 장애는 보존할 근거가 없어 503이며 사용자 메시지를 MCP 장애와 구분한다. MCP/transport 오류는 기존처럼 fallback 없이 503이다.
+
+모든 timeout/모델 오류를 503 처리하면 이미 확보한 근거를 잃고, 모든 원문 후보를 found로 올리면 C 의미 검증을 우회한다. 선택한 partial/ambiguous 계약은 근거를 보존하면서 확정 성공과 구분한다. 25초는 현재 호출 상한을 고려한 운영 휴리스틱이며 실제 latency 분포에 따라 재검토한다.
+
+### 재리뷰 결정 — fallback 후보 생명주기
+
+`latest_grounded`는 원문 검증은 끝났지만 의미 판정은 아직 끝나지 않은 현재 후보만 뜻한다. 모델이 정상적인 근거 ID 집합과 verdict를 반환한 즉시 이 목록을 비운다. `relevant`는 found로 종료하고, `uncertain`만 별도 `best_uncertain`에 보존해 이후 timeout에서 ambiguous로 반환한다. `irrelevant`는 rewrite나 다음 검색에서 장애가 나더라도 partial을 포함한 어떤 fallback에도 다시 노출하지 않는다.
+
+모델 timeout·잘못된 JSON·근거 ID 누락/중복처럼 의미 검증 자체가 완료되지 않은 경우에는 현재 원문 후보를 partial로 보존한다. 이 구분은 장애 중 근거 보존과 이미 부적합 판정을 받은 후보의 재노출 방지를 함께 만족한다. 대안으로 최근 원문 후보를 항상 보존하는 방식은 장애 시 irrelevant 후보를 보여 줄 수 있어 제외했고, 모든 모델 장애를 503으로 처리하는 방식은 아직 판정하지 못한 유효 원문 근거를 잃어 제외했다.
+
+검증은 `irrelevant → rewrite model timeout`의 결과 미노출, `uncertain → 후속 timeout`의 ambiguous 보존, 검증 도중 model timeout·형식 오류·근거 ID 오류의 partial 보존으로 나눠 수행한다. partial과 ambiguous는 C 성공으로 집계하지 않는다.

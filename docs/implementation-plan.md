@@ -83,3 +83,11 @@
 - 개발 질문 5개 A/B와 고정 모델 영어 재구성 조건: 실측 완료. 상세는 `reports/day1-completion.md`.
 - 실제 cue를 대조한 비공개 gold 초안 24개: 준비 및 ID/시간 연결 검사 완료. 내용 라벨 사람 검토와 부재 후보 4개 확정은 Day 2 종료 전까지 수행한다.
 - Day 2 시작을 되돌린 뒤 준비 작업만 수행했다. Graph·재검색·SSE 제품 구현은 아직 시작하지 않았다.
+
+## Day 2 첫 리뷰 범위 (2026-10-21)
+
+- D2-1~3: 기존 MCP 세션을 사용하는 Router/Search/Context/Verification/Replan/Finalize Graph와 opt-in JSON API를 구현했다. 기본 A/B 경로는 보존한다.
+- 최대 2회 재검색·중복 검색어 조기 종료·화자 미확인·범위 밖·MCP/모델 오류를 테스트한다. 원문 검증 서비스는 A/B/Agent가 공유한다.
+- 단계별 지연·Tool/LLM 호출은 Git 제외 로컬 JSONL로 기록하며 선택적 LangSmith 요약 전송을 제공한다.
+- D2-4~5의 SSE·Vue 진행 상태/연결 중단과 전체 웹 E2E는 다음 PR 범위다. P0 완료를 주장하지 않는다.
+- 첫 리뷰의 실측/테스트/한계는 `reports/day2-agent-json.md`에 기록한다. 변경 제시·승인 후 commit/push 및 Draft PR을 생성하며 자동 병합하지 않는다.

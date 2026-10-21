@@ -271,3 +271,13 @@ wish-finder/
 `POST /api/search`는 실제 MCP 검색 → 문맥 → 메타데이터를 호출하고 원문 cue에서 인용·시각·URL을 결정적으로 구성한다. 검색 후보에 `selected_cue_id`를 추가해 문맥·chunk cue IDs 내 포함 여부를 검증한다. 의미 검증을 생략한 후보는 `partial`과 경고로 반환하며 최종 Agent 결과로 취급하지 않는다. JSON API는 Day 2에 Graph와 통합한다.
 
 API는 단일 worker·동시 검색 1건을 사용하며 추가 검색은 503으로 거절한다. 모델과 인덱스는 MCP 서버에만 로드한다. `/health`, `/ready`, `/api/videos`를 제공한다. POST SSE는 아직 미구현이다.
+
+## 13. Day 2 첫 리뷰 구현 상태 (2026-10-21)
+
+`backend/app/agent/graph.py`에 TypedDict State와 Router/Search/Context/Verification/Replan/Finalize 노드를 구현했다. `model.py`는 기존 Ollama qwen3:8b의 구조화 JSON을 httpx로 호출한다. MCP adapter 추가 없이 lifespan의 실제 세션을 노드가 재사용한다. 임베딩 모델·인덱스는 MCP에만 있고 생성 모델은 기존 별도 Ollama 서버가 제공한다.
+
+`WISH_AGENT_ENABLED=1`이면 POST /api/search가 Graph를 호출한다. 기본값 0은 이전 A/B 공통 서비스 경로이며 keyword fixture 모드도 유지한다. API 결과 필드/인용/cue 구조는 바꾸지 않는다. LLM의 자유 설명을 채택하지 않고 검증 상태와 화자 제한만 한국어 고정 문구로 구성한다. 화자 미확인 질문은 speaker_query로 검색을 수행하고, 자막만으로 확인 불가를 안내한다. 범위 밖/일반 대화는 검색 없이 unsupported로 종료한다.
+
+의미적으로 관련한 후보가 없을 때만 최대 2회 재검색하며 query 중복 또는 전체 60초 예산 소진 시 종료한다. 관련성이 불확실한 원문 근거는 ambiguous, 후보 원문 검증 실패는 unsupported, 정상 검색 후 관련 근거 없음은 not_found다. 도구/모델 오류는 재검색하지 않고 503으로 전달한다. MCP 30초/LLM 20초 제한과 busy 보호는 유지한다.
+
+JSONL 로컬 로그에는 요청 ID·의도·상태·단계별 시간·Tool/LLM 호출·오류만 기록한다. 자동 LangSmith 원문 추적은 끄고 별도 opt-in+키가 있을 때 요약 메타데이터만 전송한다. SSE와 Vue 진행 상태는 다음 PR 범위이며 P0에서 제외하지 않는다. C 전체 정량 평가는 아직 미측정이다.
