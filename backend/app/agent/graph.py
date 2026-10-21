@@ -144,6 +144,9 @@ class FinderAgent:
         if len(ids)!=len(set(ids)) or set(ids)!=expected:
             raise SearchFailure('model_invalid_evidence_ids')
         verdicts = {j.evidence_id:j.verdict for j in decision.judgments}
+        # A complete verdict set ends the unjudged-candidate lifecycle. Only a
+        # verification failure may expose latest_grounded as a partial result.
+        stats.latest_grounded = []
         uncertain = {evidence_key(r):r for r in state.get('uncertain',[])}
         for r in state['grounded']:
             if verdicts[evidence_key(r)]=='uncertain':

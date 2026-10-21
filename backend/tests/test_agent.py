@@ -132,6 +132,17 @@ def test_invalid_model_evidence_ids_are_not_accepted(tmp_path):
     assert model.rewrites==0
 
 
+def test_irrelevant_candidate_is_not_revived_when_rewrite_model_fails(tmp_path):
+    model=ScriptedModel(('irrelevant',))
+    async def fail(*args): raise SearchFailure('model_timeout')
+    model.rewrite=fail
+    agent,_=make_agent(tmp_path,model)
+    with pytest.raises(SearchFailure,match='model_timeout'):
+        asyncio.run(agent.run('장면'))
+    record=json.loads((tmp_path/'agent.jsonl').read_text())
+    assert record['status']=='error' and record['error']=='model_timeout'
+
+
 def test_total_timeout_and_cancellation_are_not_not_found(tmp_path):
     model=ScriptedModel()
     async def slow(*args):
@@ -197,10 +208,12 @@ def test_agent_json_api_with_real_stdio_and_lifespan_cleanup(monkeypatch,tmp_pat
     assert model.closed and main.app.state.agent is None
 
 
-def test_model_failure_after_grounding_returns_non_c_partial_and_releases_busy(monkeypatch,tmp_path):
+@pytest.mark.parametrize('code',['model_timeout','model_invalid_response'])
+def test_model_failure_after_grounding_returns_non_c_partial_and_releases_busy(
+        monkeypatch,tmp_path,code):
     import backend.app.main as main
     model=ScriptedModel()
-    async def fail(*args): raise SearchFailure('model_timeout')
+    async def fail(*args): raise SearchFailure(code)
     model.verify=fail
     monkeypatch.setenv('WISH_AGENT_ENABLED','1')
     monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
@@ -248,6 +261,25 @@ def test_model_router_failure_has_distinct_api_message(monkeypatch,tmp_path):
         assert detail['code']=='model_unavailable'
         assert '의미 검증 모델' in detail['message']
         assert not main.app.state.busy
+
+
+def test_unexpected_agent_failure_has_distinct_api_message(monkeypatch,tmp_path):
+    import backend.app.main as main
+    model=ScriptedModel()
+    async def fail(*args): raise RuntimeError('private implementation detail')
+    model.route=fail
+    monkeypatch.setenv('WISH_AGENT_ENABLED','1')
+    monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
+    monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
+    monkeypatch.setattr(main,'OllamaModel',lambda *args:model)
+    with TestClient(main.app) as client:
+        main.app.state.agent.log_path=tmp_path/'agent.jsonl'
+        response=client.post('/api/search',json={'query':'RIKU'})
+        assert response.status_code==503
+        detail=response.json()['detail']
+        assert detail['code']=='agent_failure'
+        assert '검색 처리 중 오류' in detail['message']
+        assert 'private implementation detail' not in response.text
 
 
 def test_langsmith_is_explicit_opt_in_and_metadata_only(monkeypatch):
@@ -355,3 +387,26 @@ def test_telemetry_queue_does_not_delay_request_and_reuses_client(monkeypatch,tm
         await publisher.close()
         assert len(clients)==1 and len(published)==1 and published[0][1] is clients[0]
     asyncio.run(run())
+
+
+def test_langsmith_start_failure_does_not_block_agent_api(monkeypatch,tmp_path):
+    import backend.app.agent.telemetry as telemetry
+    import backend.app.main as main
+    model=ScriptedModel()
+    class FailingClient:
+        def __init__(self,**kwargs): raise RuntimeError('unavailable')
+    monkeypatch.setenv('WISH_LANGSMITH_ENABLED','1')
+    monkeypatch.setenv('LANGSMITH_API_KEY','synthetic-test-key')
+    monkeypatch.setenv('WISH_AGENT_ENABLED','1')
+    monkeypatch.setenv('WISH_KEYWORD_ONLY','1')
+    monkeypatch.setenv('WISH_MANIFEST','data/manifest.example.json')
+    monkeypatch.setattr(telemetry,'Client',FailingClient)
+    monkeypatch.setattr(main,'OllamaModel',lambda *args:model)
+    with TestClient(main.app) as client:
+        main.app.state.agent.log_path=tmp_path/'agent.jsonl'
+        assert client.get('/ready').json()['stage']=='agent_json'
+        response=client.post('/api/search',json={'query':'RIKU chose RIKU'})
+        assert response.status_code==200 and response.json()['status']=='found'
+        publisher=main.app.state.agent.telemetry
+        assert not publisher.enabled and publisher.client is None and publisher.task is None
+    assert model.closed and main.app.state.agent is None

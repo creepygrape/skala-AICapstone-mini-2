@@ -1,6 +1,6 @@
 # ADR-0003 — 역할 분리 LangGraph와 조건부 최대 2회 재검색
 
-- 상태: Accepted (사용자 확정, 구현·통합 검증 전)
+- 상태: Accepted (구현·통합 검증 진행 중)
 - 날짜: 2026-10-20
 - 관련 요구사항: FR-06, FR-07, FR-09, FR-14, FR-15
 
@@ -66,3 +66,11 @@ MCP 30초, LLM 20초, 전체 60초를 상한으로 한다. 검색 0건·불일�
 모델 timeout·응답 형식/근거 ID 오류가 원문 검증 이후 발생하면 `partial`과 `semantic_model_error`/`semantic_verification_skipped`를 반환한다. 이전 uncertain 판정이 있으면 `ambiguous`를 우선한다. Router 이전 모델 장애는 보존할 근거가 없어 503이며 사용자 메시지를 MCP 장애와 구분한다. MCP/transport 오류는 기존처럼 fallback 없이 503이다.
 
 모든 timeout/모델 오류를 503 처리하면 이미 확보한 근거를 잃고, 모든 원문 후보를 found로 올리면 C 의미 검증을 우회한다. 선택한 partial/ambiguous 계약은 근거를 보존하면서 확정 성공과 구분한다. 25초는 현재 호출 상한을 고려한 운영 휴리스틱이며 실제 latency 분포에 따라 재검토한다.
+
+### 재리뷰 결정 — fallback 후보 생명주기
+
+`latest_grounded`는 원문 검증은 끝났지만 의미 판정은 아직 끝나지 않은 현재 후보만 뜻한다. 모델이 정상적인 근거 ID 집합과 verdict를 반환한 즉시 이 목록을 비운다. `relevant`는 found로 종료하고, `uncertain`만 별도 `best_uncertain`에 보존해 이후 timeout에서 ambiguous로 반환한다. `irrelevant`는 rewrite나 다음 검색에서 장애가 나더라도 partial을 포함한 어떤 fallback에도 다시 노출하지 않는다.
+
+모델 timeout·잘못된 JSON·근거 ID 누락/중복처럼 의미 검증 자체가 완료되지 않은 경우에는 현재 원문 후보를 partial로 보존한다. 이 구분은 장애 중 근거 보존과 이미 부적합 판정을 받은 후보의 재노출 방지를 함께 만족한다. 대안으로 최근 원문 후보를 항상 보존하는 방식은 장애 시 irrelevant 후보를 보여 줄 수 있어 제외했고, 모든 모델 장애를 503으로 처리하는 방식은 아직 판정하지 못한 유효 원문 근거를 잃어 제외했다.
+
+검증은 `irrelevant → rewrite model timeout`의 결과 미노출, `uncertain → 후속 timeout`의 ambiguous 보존, 검증 도중 model timeout·형식 오류·근거 ID 오류의 partial 보존으로 나눠 수행한다. partial과 ambiguous는 C 성공으로 집계하지 않는다.

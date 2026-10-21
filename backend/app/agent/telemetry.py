@@ -42,8 +42,15 @@ class TelemetryPublisher:
 
     async def start(self):
         if self.enabled:
-            self.client = await asyncio.to_thread(Client,auto_batch_tracing=False,timeout_ms=2000)
-            self.task = asyncio.create_task(self._worker())
+            try:
+                self.client = await asyncio.to_thread(
+                    Client,auto_batch_tracing=False,timeout_ms=2000)
+                self.task = asyncio.create_task(self._worker())
+            except Exception:
+                logger.warning('langsmith_start_failed')
+                self.client = None
+                self.task = None
+                self.enabled = False
         return self
 
     def submit(self, record):
@@ -63,19 +70,24 @@ class TelemetryPublisher:
                 self.queue.task_done()
 
     async def close(self):
-        if not self.enabled:
+        if self.task is None and self.client is None:
             return
-        try:
-            async with asyncio.timeout(3):
-                await self.queue.join()
-        except TimeoutError:
-            logger.warning('langsmith_queue_shutdown_timeout')
-        self.task.cancel()
-        try:
-            await self.task
-        except asyncio.CancelledError:
-            pass
-        try:
-            await asyncio.to_thread(self.client.close)
-        except Exception:
-            logger.warning('langsmith_close_failed')
+        if self.task is not None:
+            try:
+                async with asyncio.timeout(3):
+                    await self.queue.join()
+            except TimeoutError:
+                logger.warning('langsmith_queue_shutdown_timeout')
+            self.task.cancel()
+            try:
+                await self.task
+            except asyncio.CancelledError:
+                pass
+            self.task = None
+        if self.client is not None:
+            try:
+                await asyncio.to_thread(self.client.close)
+            except Exception:
+                logger.warning('langsmith_close_failed')
+            self.client = None
+        self.enabled = False

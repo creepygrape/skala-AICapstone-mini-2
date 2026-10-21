@@ -88,3 +88,13 @@ git diff --check
 수정 후 백엔드 76 passed, 프런트엔드 2 passed, 빌드와 `git diff --check`가 통과했다. 리뷰 재현 테스트에는 시간 예산 종료/전체 timeout 근거 보존, 이전 라운드 탈락 경고 비누출, 모델 오류 fallback·구분 메시지, 태그 없는 모델 이름, 느린 추적 전송의 응답 비차단·Client 재사용, 반환/로컬 로그 telemetry 동일성을 포함한다.
 
 수정 코드로 실제 로컬 API를 재시작한 뒤 마니또 질문이 1라운드 `found`, 189초 링크, `speaker=null`, `video_timing_sampled`·`speaker_unknown` 경고를 반환하는 것도 다시 확인했다.
+
+## PR #3 재리뷰 반영
+
+정상적인 의미 verdict가 반환된 후보는 미판정 fallback 목록에서 즉시 제거한다. relevant는 found, uncertain은 별도 근거로 ambiguous에만 보존하며 irrelevant는 후속 rewrite·검색 timeout에서도 partial로 되살리지 않는다. 검증 도중 모델 timeout·형식 오류·근거 ID 오류가 발생해 의미 판정 자체를 완료하지 못했을 때만 원문 후보를 partial로 보존한다. partial과 ambiguous는 C 성공으로 집계하지 않는다.
+
+선택 기능인 LangSmith Client 초기화가 실패하면 로컬 경고 후 원격 추적만 비활성화한다. Agent/API와 로컬 JSONL 기록은 계속 동작하고, 종료 시 생성된 task와 Client만 정리한다. API는 `model_*`을 의미 검증 모델 오류, 예상하지 못한 `agent_failure`를 검색 처리 오류, MCP·transport·tool 오류를 검색 도구 오류로 구분해 내부 예외 내용을 노출하지 않는다.
+
+회귀 검증에는 irrelevant 이후 rewrite 모델 오류의 결과 미노출, uncertain 이후 timeout의 ambiguous 보존, 검증 미완료의 partial 보존, LangSmith 초기화 실패 상태의 `/ready`·검색·종료, 세 오류 계열의 안전한 한국어 메시지를 포함한다.
+
+재리뷰 수정 후 백엔드 80 passed, 프런트엔드 2 passed, 프로덕션 빌드와 `git diff --check`가 통과했다. 현재 코드로 API를 재시작한 실제 smoke에서 마니또 질문은 1라운드 `found`, cue 69의 189초 링크, `speaker=null`, `video_timing_sampled`·`speaker_unknown`을 반환했다.

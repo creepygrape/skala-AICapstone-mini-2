@@ -84,4 +84,6 @@ Graph의 Search 노드는 search_transcripts, Context 노드는 get_scene_contex
 
 PR #3 리뷰 후 LangSmith 요약 전송은 요청 경로에서 기다리지 않는다. lifespan이 단일 Client와 제한 큐 100개를 소유하며 Agent는 메타데이터 레코드를 `put_nowait`으로 넘긴다. 큐 포화 시 검색 응답을 지연시키지 않고 추적 누락 경고만 기록한다. 종료 시 최대 3초 drain 후 작업과 Client를 정리한다. 응답 latency와 busy 구간에는 외부 전송 시간이 포함되지 않는다.
 
+LangSmith는 선택 기능이므로 Client 초기화 예외가 Agent/API 또는 MCP 세션 시작을 막지 않는다. 초기화 실패는 로컬 경고를 남기고 해당 프로세스에서 원격 전송을 비활성화하며, 로컬 JSONL 기록은 계속한다. 종료는 worker task와 Client가 실제 생성된 경우에만 각각 정리한다. 추적 초기화 실패를 fail-fast로 처리하는 대안은 관측 기능 장애를 핵심 검색 장애로 확대하므로 제외했다. 테스트에서는 Client 생성 예외 상태에서도 `/ready`와 Agent 검색이 성공하고 lifespan 종료에 추가 예외가 없는지 확인한다.
+
 Ollama 모델 이름에 태그가 없으면 `:latest`로 정규화하고 `/api/tags`의 name/model 필드와 비교한다. 설치 모델을 자동 다운로드하거나 다른 모델로 대체하지 않으며 Agent 시작 실패 정책을 유지한다. 근거 ID 생성과 시각 상태 경고는 검색·Agent가 같은 공통 함수를 사용한다.
