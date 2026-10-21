@@ -54,6 +54,32 @@ def evidence_key(result):
     return f'{result.video_id}:{result.cue_ids[0]}'
 
 
+def fuse_replies(replies, limit):
+    """Merge candidate lists from several queries with RRF (k=60) over their ranks.
+
+    A chunk found by more than one query ranks first; overlapping or near-duplicate chunks of
+    the same video are dropped like in the retriever. Source cues are never rewritten here.
+    """
+    scores, first_seen = {}, {}
+    for reply in replies:
+        for rank, candidate in enumerate(reply.candidates, 1):
+            key = candidate.chunk.chunk_id
+            scores[key] = scores.get(key, 0) + 1/(60+rank)
+            first_seen.setdefault(key, candidate)
+    order = {key: i for i, key in enumerate(first_seen)}
+    merged = []
+    for key in sorted(scores, key=lambda k: (-scores[k], order[k])):
+        candidate = first_seen[key]
+        if any(m.chunk.video_id == candidate.chunk.video_id and
+               (set(m.chunk.cue_ids) & set(candidate.chunk.cue_ids) or
+                abs(m.chunk.start_seconds - candidate.chunk.start_seconds) < 10) for m in merged):
+            continue
+        merged.append(candidate.model_copy(update={'score': scores[key]}))
+        if len(merged) >= limit:
+            break
+    return SearchReply(candidates=merged, mode=replies[0].mode)
+
+
 def timing_warning(status):
     return 'video_timing_sampled' if status == 'sampled' else 'video_timing_unverified'
 

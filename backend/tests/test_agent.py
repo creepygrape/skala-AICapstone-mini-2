@@ -606,3 +606,80 @@ def test_exclude_is_filtered_before_context_calls(tmp_path):
     assert [a['top_k'] for n,a in calls if n=='search_transcripts'][0]==min(3+len(set(exclude)),20)
     assert contexts<=3
     assert contexts<=base
+
+
+# ---- dual first query: Router rewrite + the user's own words (WISH_DUAL_QUERY)
+
+def test_dual_query_is_off_by_default(tmp_path):
+    agent,session=make_agent(tmp_path,ScriptedModel(('relevant',),route_query='nothing matches here'))
+    asyncio.run(agent.run('ryokan'))
+    assert session.queries[0]=='nothing matches here' and 'ryokan' not in session.queries[:1]
+    assert len([q for q in session.queries if q=='ryokan'])==0
+
+
+def test_dual_query_adds_the_users_own_words_in_the_first_round_only(tmp_path):
+    # The Router rewrite finds nothing; the user's own words do.
+    model=ScriptedModel(('irrelevant','relevant'),route_query='nothing matches here',
+                        rewrite_queries=('ryokan','look over there'))   # 1st rewrite repeats the user's words
+    agent,session=make_agent(tmp_path,model,dual_query=True)
+    response,stats=asyncio.run(agent.run('ryokan'))
+    assert session.queries[:2]==['nothing matches here','ryokan']      # round 0: both queries
+    # The user's words were already searched, so the repeated rewrite is rejected instead of re-run.
+    assert stats['search_attempts']==1 and len(session.queries)==2
+    assert 'replan_query_unchanged' in response.warnings
+
+
+def test_dual_query_rescues_a_router_miss_without_a_replan(tmp_path):
+    base_agent,base_session=make_agent(tmp_path,ScriptedModel(('relevant',),route_query='nothing matches here'))
+    base,_=asyncio.run(base_agent.run('ryokan'))
+    assert base.search_attempts>1                                       # Router miss: only a replan finds it
+    agent,session=make_agent(tmp_path,ScriptedModel(('relevant',),route_query='nothing matches here'),dual_query=True)
+    response,stats=asyncio.run(agent.run('ryokan'))
+    assert response.status=='found' and response.search_attempts==1
+    assert stats['llm_calls']==2                                        # route + verify: no extra LLM call
+    for r in response.results:
+        assert r.evidence_text in {c.original_text for c in session.catalog.cues[r.video_id]}
+
+
+def test_dual_query_skips_identical_queries_followups_and_unsupported(tmp_path):
+    agent,session=make_agent(tmp_path,ScriptedModel(('relevant',),route_query='ryokan'),dual_query=True)
+    asyncio.run(agent.run('ryokan'))
+    assert session.queries==['ryokan']                                  # same text: one search
+    model=FollowUpModel(('relevant',))
+    agent,session=make_agent(tmp_path,model,dual_query=True)
+    asyncio.run(agent.run('another one',history=[{'query':'scene','top':None}]))
+    assert len(session.queries)==1                                      # bare follow-up is not a query
+    agent,session=make_agent(tmp_path,ScriptedModel(intent='unsupported'),dual_query=True)
+    asyncio.run(agent.run('what colour was the shirt'))
+    assert session.queries==[]
+
+
+def test_dual_query_extra_search_failure_keeps_the_primary_result(tmp_path):
+    agent,session=make_agent(tmp_path,ScriptedModel(('relevant',),route_query='RIKU chose RIKU'),
+                             behavior='tool_error',dual_query=True,)
+    session.fail_search_number=2                                        # only the extra search fails
+    response,stats=asyncio.run(agent.run('ryokan'))
+    assert response.status=='found' and len(session.queries)==2 and stats['search_attempts']==1
+
+
+def test_fuse_replies_ranks_consensus_first_and_drops_duplicates(tmp_path):
+    from backend.app.services.search import fuse_replies
+    _,session=make_agent(tmp_path)
+    one=session.retriever.search('ryokan','keyword',3)
+    two=session.retriever.search('RIKU chose RIKU','keyword',3)
+    both=fuse_replies([one,two],5)
+    keys=[c.chunk.chunk_id for c in both.candidates]
+    assert len(keys)==len(set(keys))
+    assert fuse_replies([one,two],1).candidates[0].chunk.chunk_id==both.candidates[0].chunk.chunk_id
+    shared=fuse_replies([one,one],5)                                    # same chunk twice scores double, appears once
+    assert [c.chunk.chunk_id for c in shared.candidates]==[c.chunk.chunk_id for c in one.candidates]
+    assert shared.candidates[0].score>one.candidates[0].score
+
+
+def test_dual_query_replan_after_it_still_runs_a_single_query_round(tmp_path):
+    model=ScriptedModel(('irrelevant','relevant'),route_query='nothing matches here',
+                        rewrite_queries=('look over there',))
+    agent,session=make_agent(tmp_path,model,dual_query=True)
+    response,stats=asyncio.run(agent.run('ryokan'))
+    assert session.queries==['nothing matches here','ryokan','look over there']
+    assert stats['search_attempts']==2 and response.status=='found'

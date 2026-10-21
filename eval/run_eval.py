@@ -198,10 +198,12 @@ async def run(args):
                 model = build_model(profile=load_profile())
                 await model.ready()
                 output['agent_model'] = model.name
+                output['dual_query'] = os.getenv('WISH_DUAL_QUERY')=='1'
                 probe = RouteProbe(model)
                 agent = FinderAgent(session,metadata,probe,mode='hybrid',
                                     log_path=private_output('eval/private/agent-eval.jsonl'),
                                     telemetry=telemetry,
+                                    dual_query=os.getenv('WISH_DUAL_QUERY')=='1',
                                     trace_dir=private_output(os.environ['WISH_AGENT_TRACE'])
                                     if os.getenv('WISH_AGENT_TRACE') else None)
             router_queries = {}
