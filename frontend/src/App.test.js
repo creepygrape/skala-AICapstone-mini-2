@@ -12,7 +12,7 @@ const render = new Function('Vue', compile(template, { mode: 'function' }).code)
 const LABELS = {
   routing: ['질문 유형을 파악하고 있어요.', '질문 유형 파악 완료'],
   searching: ['관련 장면을 검색 중이에요.', '관련 장면 검색 완료'],
-  validating: ['원문과 시점을 확인하고 있어요.', '원문과 시점 확인 완료'],
+  validating: ['원문과 시점을 확인하고 있어요.', '원문과 시점 확인 완료', '원문과 시점을 확인하지 못했어요'],
 }
 async function page(status, warnings, results = [], extra = {}) {
   const app = Vue.createSSRApp({ render, data: () => ({
@@ -52,6 +52,14 @@ describe('progress steps and inline player', () => {
     expect(html).toContain('질문 유형 파악 완료')
     expect(html).toContain('0.3초')
     expect(html).toContain('관련 장면을 검색 중이에요.')
+  })
+  it('shows a failed step instead of a completed check', async () => {
+    const html = await page('found', [], [], { response: null, steps: [
+      { event:'validating', attempt:0, state:'failed', durationMs:500, clientStart:0 },
+    ] })
+    expect(html).toContain('원문과 시점을 확인하지 못했어요')
+    expect(html).not.toContain('원문과 시점 확인 완료')
+    expect(html).toContain('실패')
   })
   it('renders the player inside each card with the YouTube link as fallback', async () => {
     const html = await page('found', [], [card])

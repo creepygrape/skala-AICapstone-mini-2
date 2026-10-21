@@ -54,6 +54,15 @@ class RunStats:
         self.timing = {}
         self.intent = None
         self.progress = progress
+        self.pending = {}
+
+    def add_pending(self, node, seconds):
+        self.pending[node] = self.pending.get(node, 0) + int(seconds*1000)
+
+    def take_pending(self):
+        """Node milliseconds finished since the last public event (reset on read)."""
+        pending, self.pending = self.pending, {}
+        return pending
 
 
 class FinderAgent:
@@ -83,18 +92,26 @@ class FinderAgent:
         async def run(state, config):
             stats = config['configurable']['stats']
             started = time.monotonic()
+            reported_live = False
             try:
                 event = {'router':'routing','search':'searching','context':'validating'}.get(name)
                 if event and stats.progress is not None:
                     attempt = state.get('attempt',0)
-                    await stats.progress(event,{'attempt':attempt})
+                    await stats.progress(event,{'attempt':attempt,'stage_ms':stats.take_pending()})
                 update = await getattr(self, '_'+name)(state, stats)
                 if name == 'replan' and not update.get('stop_replan') and stats.progress is not None:
-                    await stats.progress('replanning', {'attempt': update['attempt']})
+                    # Announced after the rewrite finished, so its own time is reported live.
+                    stage_ms = stats.take_pending()
+                    stage_ms['replan'] = int((time.monotonic()-started)*1000)
+                    reported_live = True
+                    await stats.progress('replanning', {'attempt': update['attempt'],
+                                                        'stage_ms': stage_ms})
                 return update
             finally:
                 stats.stages.append({'node':name,'attempt':state.get('attempt',0),
                                      'seconds':round(time.monotonic()-started,4)})
+                if not reported_live:
+                    stats.add_pending(name, time.monotonic()-started)
         return run
 
     async def _llm(self, stats, method, *args):
@@ -244,6 +261,7 @@ class FinderAgent:
 
     def _emit(self, request_id, stats, started, state, error):
         record = self._telemetry(request_id,stats,started,state,error)
+        record['stage_tail_ms'] = stats.take_pending()
         try:
             self.log_path.parent.mkdir(parents=True,exist_ok=True)
             with self.log_path.open('a',encoding='utf-8') as stream:

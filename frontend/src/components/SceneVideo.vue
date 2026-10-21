@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue'
-import { loadYouTubeApi, isVideoId, playerErrorMessage } from '../api/youtube'
+import { loadYouTubeApi, isVideoId, playerErrorMessage, createScenePlayer } from '../api/youtube'
 
 const props = defineProps({
   videoId: String, start: Number, title: String,
@@ -8,8 +8,7 @@ const props = defineProps({
 const host = ref(null)
 const errorCode = ref(null)
 const blocked = ref(false)
-let player
-let ready = false
+let scene
 
 onMounted(async () => {
   if (!isVideoId(props.videoId)) return
@@ -19,27 +18,16 @@ onMounted(async () => {
     // YT.Player swaps the target node for an iframe, so give it a node Vue does not patch.
     const target = document.createElement('div')
     host.value.appendChild(target)
-    const playerVars = { start: Math.floor(props.start), rel: 0, playsinline: 1, origin: location.origin }
-    player = new YT.Player(target, {
-      videoId: props.videoId, width: '100%', height: '100%', playerVars,
-      events: { onReady: () => { ready = true }, onError: e => {
-        errorCode.value = e.data
-        if (e.data === 101 || e.data === 150) {
-          blocked.value = true
-          try { player.destroy() } catch { /* already removed */ }
-          player = undefined; ready = false
-        }
-      } },
+    scene = createScenePlayer(YT, target, {
+      videoId: props.videoId, start: props.start, origin: location.origin,
+      onChange: state => { errorCode.value = state.errorCode; blocked.value = state.blocked },
     })
   } catch { errorCode.value = 'api' }
 })
-// Jump to a moment (default: the player's start) and play; false when the embedded player is unavailable.
-function seek(at = props.start) {
-  if (!player || !ready) return false
-  try { player.seekTo(Math.floor(at), true); player.playVideo(); return true } catch { return false }
-}
+// Jump to a moment and play; false whenever the embed is unavailable or errored (caller opens YouTube).
+const seek = at => scene?.seek(at) ?? false
 defineExpose({ seek })
-onBeforeUnmount(() => { try { player?.destroy() } catch { /* already removed */ } })
+onBeforeUnmount(() => scene?.destroy())
 </script>
 
 <template>

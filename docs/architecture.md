@@ -182,7 +182,7 @@ data: {"request_id":"req-123","status":"found","elapsed_ms":1850}
 
 - POST SSE이므로 `EventSource` 단독 사용하지 않고 Vue 프론트의 `fetch` + `ReadableStream` 파서를 사용.
 - 이벤트를 임의 JSON 청크 단위로 파싱하면 분할 수신에서 오류가 생김. **`\n\n` 프레임 경계 및 멀티라인 data 지원**이 중요.
-- 진행 이벤트와 `done`의 `elapsed_ms`(요청 시작 기준 서버 경과 시간)로 UI가 단계별 소요 시간을 계산한다. `result`에는 넣지 않는다.
+- 진행 이벤트와 `done`의 `stage_ms`(직전 공개 이벤트 이후 완료된 노드별 ms)로 UI가 단계별 소요 시간을 계산하고, 없으면 `elapsed_ms`(요청 시작 기준 서버 경과 시간)의 이벤트 간 차이로 대체한다. `result`에는 넣지 않는다.
 - 상태 이벤트는 작업 결과 요약만; chain-of-thought나 미검증 자연어 초안을 보내지 않는다.
 - 실제 error는 `event:error` + `done`으로 매핑하며, 연결이 끊긴 경우에는 클라이언트가 안전하게 종료 상태를 표시.
 - 링크 생성 시 허용 도메인/정확한 video ID/초 단위 시간 검증. 공개 동영상 URL을 조합하되 존재하지 않는 video ID를 생성하지 않음.

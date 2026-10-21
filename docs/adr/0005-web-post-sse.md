@@ -48,3 +48,7 @@ JSON/SSE는 공통 실행 함수로 검색 분기·오류 변환·로그를 공�
 ## 진행 이벤트에 elapsed_ms 추가 (2026-10-21, 시연 피드백)
 
 배경: 진행 문구가 덮어써져 단계 이력과 소요 시간을 볼 수 없었다. 결정: routing/searching/validating/replanning/done payload에 가산 필드 `elapsed_ms`(서버 monotonic 기준 요청 시작 후 경과)를 추가한다. 프론트는 이벤트를 누적하고 다음 이벤트와의 차이로 단계 시간을 계산한다. 대안: 브라우저 수신 시각 차이(네트워크·버퍼링 영향으로 부정확) — 서버 값이 없을 때만 폴백. 기존 필드·이벤트 이름·순서는 불변이고 `result`에는 추가하지 않는다(검증 전 결과 미노출 원칙 유지). 검증: test_sse.py의 elapsed_ms 단조 증가 단언, App.test.js 누적 렌더 테스트. 재검토: 단계 내부 세부(LLM/Tool 호출별) 시간이 필요해질 때.
+
+### 보강 — 노드별 실제 시간 `stage_ms` (PR #6 리뷰 반영)
+
+`elapsed_ms`의 이벤트 간 차이는 노드별 시간이 아니다. `replanning`은 rewrite 완료 후 발행(PR #4 계약)되므로 rewrite 시간이 직전 validating에 합산되고, 마지막 구간에는 finalize가 섞인다. 이벤트 이름·발행 시점은 유지하고, 진행 이벤트와 `done`에 가산 필드 `stage_ms`(마지막 공개 이벤트 이후 완료된 노드별 ms: `router/search/context/verification/replan/finalize`)를 추가한다. 프론트(`api/steps.js`)는 routing←router, searching←search, validating←context+verification, replanning←replan으로 매핑하고 `finalize`는 총 시간에만 반영한다. 비-Agent 폴백 경로처럼 `stage_ms`가 없으면 `elapsed_ms` 이벤트 간 경과로 대체하며 이 경우 값은 노드별 시간이 아니라 공개 이벤트 사이 경과 시간이다. `error` 이벤트 또는 `done.status=error`는 실행 중 단계를 완료가 아닌 실패로 표시한다. 검증: `test_agent.py`(rewrite 지연 시 `stage_ms.replan` 귀속), `steps.test.js`(실제 이벤트 순서).

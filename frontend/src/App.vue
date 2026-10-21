@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { searchScenes, timestamp, formatElapsed, groupByVideo } from './api/search'
+import { applyEvent, abortRunning, totalDuration } from './api/steps'
 import SceneVideo from './components/SceneVideo.vue'
 
 const query = ref('')
@@ -10,12 +11,13 @@ const response = ref(null)
 const videoCount = ref(null)
 const timingSampled = ref(false)
 const steps = ref([])
+const doneMs = ref(null)
 const now = ref(performance.now())
 const LABELS = {
-  routing: ['질문 유형을 파악하고 있어요.', '질문 유형 파악 완료'],
-  searching: ['관련 장면을 검색 중이에요.', '관련 장면 검색 완료'],
-  validating: ['원문과 시점을 확인하고 있어요.', '원문과 시점 확인 완료'],
-  replanning: ['다른 표현으로 다시 찾고 있어요.', '재검색어 준비 완료'],
+  routing: ['질문 유형을 파악하고 있어요.', '질문 유형 파악 완료', '질문 유형을 파악하지 못했어요'],
+  searching: ['관련 장면을 검색 중이에요.', '관련 장면 검색 완료', '관련 장면을 검색하지 못했어요'],
+  validating: ['원문과 시점을 확인하고 있어요.', '원문과 시점 확인 완료', '원문과 시점을 확인하지 못했어요'],
+  replanning: ['다른 표현으로 다시 찾고 있어요.', '재검색어 준비 완료', '재검색어를 준비하지 못했어요'],
 }
 let controller
 let ticker
@@ -27,22 +29,11 @@ function playAt(group, item) {
 }
 const cardKey = item => `${item.video_id}:${item.cue_ids.join(',')}`
 
-function closeStep(step, serverMs, state = 'done') {
-  if (!step || step.state !== 'running') return
-  const clientMs = performance.now() - step.clientStart
-  step.durationMs = Number.isFinite(serverMs) && Number.isFinite(step.serverStart)
-    ? Math.max(0, serverMs - step.serverStart) : clientMs
-  step.state = state
-}
 function onProgress(event, data) {
-  const last = steps.value[steps.value.length - 1]
-  if (LABELS[event]) {
-    closeStep(last, data.elapsed_ms)
-    steps.value.push({ event, attempt: data.attempt, state: 'running', serverStart: data.elapsed_ms,
-      clientStart: performance.now(), durationMs: 0 })
-  } else if (event === 'done') closeStep(last, data.elapsed_ms)
+  steps.value = applyEvent(steps.value, event, data, performance.now())
+  if (event === 'done') doneMs.value = data.elapsed_ms
 }
-const totalMs = () => steps.value.reduce((sum, step) => sum + step.durationMs, 0)
+const totalMs = () => totalDuration(steps.value, doneMs.value)
 const examples = ['리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면', '료칸이 뭔지 물어본 부분', '료칸이 뭔지 물어본 멤버가 누구야?']
 
 onMounted(async () => {
@@ -60,7 +51,7 @@ onUnmounted(() => { controller?.abort(); clearInterval(ticker) })
 async function submit() {
   if (!query.value.trim() || busy.value) return
   controller = new AbortController()
-  busy.value = true; error.value = ''; response.value = null; steps.value = []
+  busy.value = true; error.value = ''; response.value = null; steps.value = []; doneMs.value = null
   clearInterval(ticker); ticker = setInterval(() => { now.value = performance.now() }, 100)
   const timeout = setTimeout(() => controller.abort(), 70000)
   try {
@@ -69,7 +60,7 @@ async function submit() {
   catch (e) { error.value = e.name === 'AbortError' ? '검색이 취소되었거나 시간이 초과됐습니다. 다시 시도해 주세요.' : e.message }
   finally {
     clearTimeout(timeout); clearInterval(ticker); busy.value = false
-    closeStep(steps.value[steps.value.length - 1], undefined, error.value ? 'aborted' : 'done')
+    steps.value = abortRunning(steps.value, performance.now())
   }
 }
 </script>
@@ -89,16 +80,16 @@ async function submit() {
     </form>
     <div class="examples"><span>이렇게 찾아보세요</span><button v-for="example in examples" :key="example" :disabled="busy" @click="query = example">{{ example }}</button></div>
     <section v-if="steps.length || busy" class="steps" aria-label="검색 진행 상황">
-      <p v-if="!steps.length" role="status" class="notice progress">검색을 준비하고 있어요.<button type="button" @click="controller?.abort()">취소</button></p>
+      <p v-if="!steps.length" role="status" class="notice progress">검색을 준비하고 있어요.<button type="button" class="cancel" data-testid="cancel" @click="controller?.abort()">취소</button></p>
       <ol v-else>
         <li v-for="(step, i) in steps" :key="i" :class="step.state">
-          <span class="mark" aria-hidden="true">{{ step.state === 'done' ? '✓' : step.state === 'aborted' ? '–' : '…' }}</span>
-          <span>{{ step.state === 'done' ? LABELS[step.event][1] : LABELS[step.event][0] }}<template v-if="step.attempt !== undefined && step.event !== 'routing'"> ({{ step.attempt + 1 }}차)</template></span>
-          <span class="elapsed">{{ step.state === 'running' ? formatElapsed(now - step.clientStart) : step.state === 'aborted' ? '중단' : formatElapsed(step.durationMs) }}<template v-if="step.state === 'done'"> 소요</template></span>
+          <span class="mark" aria-hidden="true">{{ step.state === 'done' ? '✓' : step.state === 'failed' ? '✕' : step.state === 'aborted' ? '–' : '…' }}</span>
+          <span>{{ step.state === 'done' ? LABELS[step.event][1] : step.state === 'failed' ? LABELS[step.event][2] : LABELS[step.event][0] }}<template v-if="step.attempt !== undefined && step.event !== 'routing'"> ({{ step.attempt + 1 }}차)</template></span>
+          <span class="elapsed">{{ step.state === 'running' ? formatElapsed(now - step.clientStart) : step.state === 'aborted' ? '중단' : step.state === 'failed' ? '실패' : formatElapsed(step.durationMs) }}<template v-if="step.state === 'done'"> 소요</template></span>
         </li>
       </ol>
       <p v-if="!busy && steps.length" class="total">총 {{ formatElapsed(totalMs()) }}</p>
-      <button v-if="busy && steps.length" type="button" class="cancel" @click="controller?.abort()">취소</button>
+      <button v-if="busy && steps.length" type="button" class="cancel" data-testid="cancel" @click="controller?.abort()">취소</button>
     </section>
     <p v-if="error" role="alert" class="notice error">{{ error }}</p>
     <section v-if="response" aria-live="polite" class="results">

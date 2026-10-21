@@ -8,7 +8,7 @@
 .steps li.running{color:#193a31;font-weight:600}
 .steps .mark{position:relative;z-index:1;flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;background:#e8f0e3;color:#205b41}
 .steps li.done .mark{background:#205b41;color:white}
-.steps li.aborted{opacity:.6}.steps li.running .mark{background:white}
+.steps li.aborted{opacity:.6}.steps li.failed{color:#823c29}.steps li.failed .mark{background:#823c29;color:white}.steps li.failed .elapsed{background:#f9e6df;color:#823c29}.steps li.running .mark{background:white}
 .steps li.running .mark{font-size:0;background:transparent;border:2px solid #cfe0cf;border-top-color:#205b41;animation:spin .8s linear infinite}
 .steps .elapsed{margin-left:auto;font-size:12px;font-weight:500;font-variant-numeric:tabular-nums;color:#52665d;background:#f1f6ee;border-radius:20px;padding:2px 10px}
 .steps li.running .elapsed{color:#205b41;background:#e0eddb}

@@ -73,6 +73,9 @@ async def main():
         await wait_for("document.querySelector('article iframe') !== null",15)
         src = await evaluate("document.querySelector('article iframe').src")
         assert 'youtube.com/embed/1HJgbE66GI4' in src and 'start=189' in src, src
+        # Verified: iframe src. NOT verified here: actual playback/seek success inside the
+        # YouTube player and the blocked-video fallback (they need a real player; see unit tests).
+        print('verified: iframe src; unverified: real playback/seek and blocked-video fallback')
 
         await evaluate("document.querySelector('#query').value='료칸이 뭐냐고 물었던 사람은 누구야? 그 장면 찾아줘'; document.querySelector('#query').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('form').requestSubmit()")
         await wait_for("document.querySelector('article') !== null && !document.querySelector('button[type=submit]').disabled")
@@ -87,8 +90,8 @@ async def main():
         assert not await evaluate("!!document.querySelector('article')")
         # Cancel while the actual model is waiting, then prove the API is reusable.
         await evaluate("document.querySelector('#query').value='리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면'; document.querySelector('#query').dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('form').requestSubmit()")
-        await wait_for("document.querySelector('[role=status]') !== null")
-        await evaluate("document.querySelector('[role=status] button').click()")
+        await wait_for("document.querySelector('button.cancel') !== null")
+        await evaluate("document.querySelector('button.cancel').click()")
         await wait_for("document.querySelector('[role=alert]')?.textContent.includes('취소') && !document.querySelector('button[type=submit]').disabled")
         await asyncio.sleep(.5)
         await evaluate("document.querySelector('form').requestSubmit()")
