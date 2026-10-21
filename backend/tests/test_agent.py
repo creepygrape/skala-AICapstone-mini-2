@@ -445,3 +445,27 @@ def test_progress_stage_ms_attributes_rewrite_time_to_replanning(tmp_path):
     # The next searching event does not repeat the rewrite time.
     assert 'replan' not in events[4][1]['stage_ms']
     assert {'context','verification','finalize'} <= set(record['stage_tail_ms'])
+
+
+def test_trace_is_off_by_default_and_records_rounds_when_enabled(tmp_path):
+    agent,_=make_agent(tmp_path,ScriptedModel(('irrelevant','relevant')))
+    asyncio.run(agent.run('장면'))
+    assert not (tmp_path/'traces').exists()
+    agent,_=make_agent(tmp_path,ScriptedModel(('irrelevant','relevant')),trace_dir=tmp_path/'traces')
+    response,_=asyncio.run(agent.run('장면'))
+    [path]=list((tmp_path/'traces').glob('*.json'))
+    trace=json.loads(path.read_text())
+    steps=[t['step'] for t in trace['trace']]
+    assert steps==['router','search','context','verification','replan','search','context','verification']
+    first_search=trace['trace'][1]
+    assert first_search['attempt']==0 and first_search['candidates'][0]['rank']==1
+    assert trace['user_query']=='장면' and trace['status']==response.status=='found'
+    assert trace['trace'][3]['verdicts'][0]['verdict']=='irrelevant'
+
+
+def test_trace_dir_must_be_private():
+    from backend.app.main import trace_dir
+    from backend.app.services.video_catalog import ROOT
+    assert trace_dir(None) is None
+    assert trace_dir('/tmp/public-traces') is None
+    assert trace_dir('eval/private/traces')==(ROOT/'eval/private/traces').resolve()

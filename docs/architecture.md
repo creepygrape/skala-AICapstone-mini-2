@@ -255,6 +255,7 @@ wish-finder/
 - ADR-0004: 공식 MCP SDK 2.x MCPServer와 로컬 stdio subprocess 경계
 - ADR-0005: Vue + FastAPI POST SSE
 - ADR-0006: 원문 cue 보존/윈도우 청킹/근거 회귀 검증
+- ADR-0007: 결과 카드 YouTube 임베드·플레이어 오류 폴백
 
 ## 11. 구현 전 확인사항
 

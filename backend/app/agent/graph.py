@@ -44,7 +44,7 @@ class FinderState(TypedDict, total=False):
 
 
 class RunStats:
-    def __init__(self, progress=None):
+    def __init__(self, progress=None, trace=False):
         self.tool_calls = 0
         self.llm_calls = 0
         self.search_attempts = 0
@@ -54,7 +54,14 @@ class RunStats:
         self.timing = {}
         self.intent = None
         self.progress = progress
+        self.user_query = None
         self.pending = {}
+        # Opt-in diagnostic trace (contains subtitle text; written only to a private dir).
+        self.trace = [] if trace else None
+
+    def note(self, step, **data):
+        if self.trace is not None:
+            self.trace.append({'step':step, **data})
 
     def add_pending(self, node, seconds):
         self.pending[node] = self.pending.get(node, 0) + int(seconds*1000)
@@ -69,12 +76,13 @@ class FinderAgent:
     """Compile once per lifespan; dependencies are reused, State stays per request."""
     def __init__(self, session, metadata, model, *, mode='hybrid',
                  tool_call=call_tool, timeout=60, log_path=None, telemetry=None,
-                 min_replan_budget=MIN_REPLAN_BUDGET_SECONDS):
+                 min_replan_budget=MIN_REPLAN_BUDGET_SECONDS, trace_dir=None):
         self.session, self.metadata, self.model = session, metadata, model
         self.mode, self.tool_call, self.timeout = mode, tool_call, timeout
         self.log_path = Path(log_path) if log_path else ROOT/'logs/agent.jsonl'
         self.telemetry = telemetry
         self.min_replan_budget = min_replan_budget
+        self.trace_dir = Path(trace_dir) if trace_dir else None
         graph = StateGraph(FinderState)
         for name in ['router','search','context','verification','replan','finalize']:
             graph.add_node(name, self._node(name))
@@ -130,12 +138,19 @@ class FinderAgent:
         route = await self._llm(stats,'route',state['user_query'])
         stats.intent = route.intent
         query = SearchRequest(query=route.search_query).query
+        stats.note('router', intent=route.intent, query=query)
         return {'intent':route.intent,'query':query,'queries':[query]}
 
     async def _search(self, state, stats):
         stats.search_attempts += 1
         reply = await self._tool(stats,'search_transcripts',
             {'query':state['query'],'mode':self.mode,'top_k':3},SearchReply)
+        if stats.trace is not None:
+            stats.note('search', attempt=state.get('attempt',0), query=state['query'], candidates=[
+                {'rank':i, 'video_id':c.chunk.video_id, 'start':c.chunk.start_seconds,
+                 'end':c.chunk.end_seconds, 'score':round(c.score,5),
+                 'selected_cue_id':c.selected_cue_id, 'text':c.chunk.text_for_retrieval[:300]}
+                for i,c in enumerate(reply.candidates,1)])
         return {'reply':reply}
 
     async def _context(self, state, stats):
@@ -144,6 +159,8 @@ class FinderAgent:
         results, _, timing, contexts = await ground_candidates(state['reply'],self.metadata,counted)
         stats.latest_grounded = results
         stats.timing.update(timing)
+        stats.note('context', grounded=[evidence_key(r) for r in results],
+                   rejected=len(state['reply'].candidates)-len(results))
         return {'grounded':results,'contexts':contexts,'timing':{**state.get('timing',{}),**timing},
                 'round_all_rejected':bool(state['reply'].candidates) and not results}
 
@@ -169,6 +186,9 @@ class FinderAgent:
         if len(ids)!=len(set(ids)) or set(ids)!=expected:
             raise SearchFailure('model_invalid_evidence_ids')
         verdicts = {j.evidence_id:j.verdict for j in decision.judgments}
+        stats.note('verification', verdicts=[
+            {'evidence_id':evidence_key(r), 'start':r.start_seconds, 'quote':r.evidence_text,
+             'verdict':verdicts[evidence_key(r)]} for r in state['grounded']])
         # A complete verdict set ends the unjudged-candidate lifecycle. Only a
         # verification failure may expose latest_grounded as a partial result.
         stats.latest_grounded = []
@@ -196,6 +216,7 @@ class FinderAgent:
     async def _replan(self, state, stats):
         query = await self._llm(stats,'rewrite',state['user_query'],state['queries'],state['verdicts'])
         query = SearchRequest(query=query).query
+        stats.note('replan', previous=state['queries'], proposed=query)
         if state['deadline']-time.monotonic() < self.min_replan_budget:
             return {'stop_replan':True,'warnings':list(dict.fromkeys(
                 [*state['warnings'],'replan_budget_exhausted']))}
@@ -262,6 +283,7 @@ class FinderAgent:
     def _emit(self, request_id, stats, started, state, error):
         record = self._telemetry(request_id,stats,started,state,error)
         record['stage_tail_ms'] = stats.take_pending()
+        self._write_trace(record, stats, state)
         try:
             self.log_path.parent.mkdir(parents=True,exist_ok=True)
             with self.log_path.open('a',encoding='utf-8') as stream:
@@ -272,11 +294,28 @@ class FinderAgent:
             self.telemetry.submit(record)
         return record
 
+    def _write_trace(self, record, stats, state):
+        """Private diagnostic dump; failures never affect the search response."""
+        if self.trace_dir is None or stats.trace is None:
+            return
+        response = state.get('response') if state else None
+        payload = {**record, 'user_query':stats.user_query, 'trace':stats.trace,
+                   'warnings':response.warnings if response else [],
+                   'results':[{'evidence_id':evidence_key(r), 'start':r.start_seconds,
+                               'quote':r.evidence_text} for r in (response.results if response else [])]}
+        try:
+            self.trace_dir.mkdir(parents=True,exist_ok=True)
+            name = f"{time.strftime('%Y%m%d-%H%M%S')}-{record['request_id']}.json"
+            (self.trace_dir/name).write_text(json.dumps(payload,ensure_ascii=False,indent=1),encoding='utf-8')
+        except OSError:
+            logger.warning('agent_trace_failed request_id=%s',record['request_id'])
+
     async def run(self, query, *, request_id=None,
                   progress: Callable[[str,dict],Awaitable[None]] | None = None):
         query = SearchRequest(query=query).query
         request_id = request_id or str(uuid4())
-        stats = RunStats(progress)
+        stats = RunStats(progress, trace=self.trace_dir is not None)
+        stats.user_query = query
         started = time.monotonic()
         error = None
         state = None
