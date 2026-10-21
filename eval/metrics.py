@@ -36,6 +36,36 @@ def answerability_metrics(question, response):
     }
 
 
+SPEAKER_NOTICE = '자막만으로 화자를 확인할 수 없습니다'
+
+
+def agent_metrics(question, response, intent, scene):
+    """C-only safety checks. Speaker success needs intent, scene and notice together.
+
+    `scene` is scene_metrics() output. speaker=null alone is never a success.
+    """
+    results = response.results
+    assertions = sum(r.speaker is not None for r in results)
+    notice = (bool(results) and 'speaker_unknown' in response.warnings
+              and all(SPEAKER_NOTICE in r.explanation_ko for r in results))
+    out = {'intent':intent, 'speaker_assertions':assertions,
+           'scene_misrouted':(question.scene_answerable and intent in {'unsupported','chat'}),
+           'speaker_intent_ok':None, 'speaker_scene_ok':None, 'speaker_notice_ok':None,
+           'speaker_unknown_correct':None, 'unsupported_correct':None, 'not_found_correct':None}
+    if question.answerability == 'speaker_unknown':
+        intent_ok = intent == 'speaker_query'
+        scene_ok = bool(scene and scene['scene_success_at_1'])
+        out.update(speaker_intent_ok=intent_ok, speaker_scene_ok=scene_ok, speaker_notice_ok=notice,
+                   speaker_unknown_correct=(response.status != 'error' and intent_ok and scene_ok
+                                            and notice and assertions == 0))
+    elif question.answerability == 'visual_unsupported':
+        out['unsupported_correct'] = (response.status == 'unsupported' and not results
+                                      and intent == 'unsupported')
+    elif question.answerability == 'not_found':
+        out['not_found_correct'] = response.status == 'not_found' and not results
+    return out
+
+
 def accuracy(values, *, planned=0, reason=None):
     scored = [v for v in values if v is not None]
     return {'correct':sum(scored), 'denominator':len(scored), 'planned_denominator':planned,
@@ -52,6 +82,7 @@ def summarize(records, tasks):
         planned = [t for t in tasks if (t['condition'],t['system']) == (condition,system)]
         scenes = [r for r in group if r['metrics'] is not None]
         scene_count = sum(t['question'].scene_answerable for t in planned)
+        is_agent = system.startswith('C')
         negatives = sum(t['question'].answerability == 'not_found' for t in planned)
         speakers = sum(t['question'].answerability == 'speaker_unknown' for t in planned)
         visuals = sum(t['question'].answerability == 'visual_unsupported' for t in planned)
@@ -63,11 +94,21 @@ def summarize(records, tasks):
             'hit_at_3_count':sum(r['metrics']['hit_at_3'] for r in scenes),
             'scene_success_at_1':accuracy([r['metrics']['scene_success_at_1'] for r in scenes], planned=scene_count),
             'hit_at_3':accuracy([r['metrics']['hit_at_3'] for r in scenes], planned=scene_count),
-            'not_found_accuracy':accuracy([r['answerability_metrics']['not_found_correct'] for r in group], planned=negatives),
-            'speaker_unknown_accuracy':accuracy([], planned=speakers, reason='constant_speaker_warning'),
-            'unsupported_accuracy':accuracy([], planned=visuals, reason='baseline_has_no_intent_router'),
-            'unsupported_speaker_assertions':sum(r['answerability_metrics']['unsupported_speaker_assertions'] for r in group),
+            'not_found_accuracy':accuracy([(r['agent_metrics'] if is_agent else r['answerability_metrics'])['not_found_correct']
+                                           for r in group], planned=negatives, reason='no_confirmed_not_found_questions'),
+            'speaker_unknown_accuracy':(accuracy([r['agent_metrics']['speaker_unknown_correct'] for r in group], planned=speakers)
+                                        if is_agent else accuracy([], planned=speakers, reason='constant_speaker_warning')),
+            'unsupported_accuracy':(accuracy([r['agent_metrics']['unsupported_correct'] for r in group], planned=visuals)
+                                    if is_agent else accuracy([], planned=visuals, reason='baseline_has_no_intent_router')),
+            'unsupported_speaker_assertions':sum((r['agent_metrics']['speaker_assertions'] if is_agent
+                                                  else r['answerability_metrics']['unsupported_speaker_assertions']) for r in group),
+            'scene_misrouted':sum(bool(r['agent_metrics']['scene_misrouted']) for r in group) if is_agent else None,
             'mean_seconds':round(mean(r['latency_seconds'] for r in group),4) if group else None,
+            'max_seconds':round(max(r['latency_seconds'] for r in group),4) if group else None,
+            'mean_tool_calls':round(mean(r.get('tool_calls',0) for r in group),3) if group else None,
+            'mean_llm_calls':round(mean(r.get('llm_calls',0) for r in group),3) if group else None,
+            'total_tool_calls':sum(r.get('tool_calls',0) for r in group),
+            'total_llm_calls':sum(r.get('llm_calls',0) for r in group),
             'samples_per_question':1,
         })
     return summaries

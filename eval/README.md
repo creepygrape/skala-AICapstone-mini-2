@@ -1,13 +1,14 @@
 # 평가 준비와 실행
 
-Day 1에는 개발 질문 5개의 A=BM25Plus/B=Hybrid를 비교한다. C=Hybrid+Agent는 아직 구현·측정하지 않았다. 데이터·질문·정답을 동일하게 두며, 한국어 원문과 고정한 모델 영어 재구성 조건을 따로 보고한다.
+A=BM25Plus/B=Hybrid/C=Hybrid+Agent(실제 `FinderAgent`)를 같은 corpus·질문·정답으로 비교한다. Day 2 gold 실측은 [결과 보고서](../docs/reports/day2-eval.md)를 따른다. 데이터·질문·정답을 동일하게 두며, 한국어 원문과 고정한 모델 영어 재구성 조건을 따로 보고한다.
 
 ## 파일
 
 - `dataset.py`: 질문·정답 타입과 원문 cue 연결 검증.
 - `metrics.py`: 실제 클릭 링크 시각 한 점과 부재·화자 미확인 지표를 분리 계산.
 - `paths.py`: 프로젝트 루트 기준 입력 경로와 비공개 출력 경계.
-- `run_eval.py`: 실제 MCP 서버 하나에서 A/B 실행. 실행 중인 API는 먼저 종료해 임베딩 모델의 중복 로딩을 피한다.
+- `agent_runner.py`: C 실행. 모델을 감싼 `RouteProbe`로 Router 첫 검색어를 기록하고, 통제 실험에서는 첫 검색어만 대체한다(Agent 코드는 그대로).
+- `run_eval.py`: 실제 MCP 서버 하나에서 A/B/C 실행. `--systems A,B,C`, `--control`(C-ko), gold 승인 해시 검증. 실행 중인 API는 먼저 종료해 임베딩 모델의 중복 로딩을 피한다.
 - `dataset.example.jsonl`: 공개 합성 예시. 실제 영상 정답이 아니다.
 - `private/`: 로컬 전용 개발 질문·gold 초안·고정 영어 검색어·실행 결과. Git 제외.
 
@@ -46,10 +47,18 @@ API와 평가는 `backend/app/services/search.py`를 함께 호출한다. 한국
 
 모든 CLI 상대 경로는 실행 디렉터리와 무관하게 프로젝트 루트 기준이다. 출력은 정규화한 `eval/private/` 내부만 허용한다. 절대 경로·`..`·심볼릭 링크로 경계를 벗어나면 거부하며, 기존 출력 파일은 덮어쓰지 않는다. 매 문항 후 비공개 폴더 안에서 원자적으로 체크포인트를 저장한다.
 
-## C 화자 평가 계약 (Day 2 구현 예정)
+## C 화자 평가 계약 (구현·측정 완료)
 
 화자 정답은 Router의 `speaker_query` 분류, 관련 장면의 Scene Success@1 성공, 사용자에게 자막만으로 화자를 확인할 수 없다는 안내 제공을 모두 만족해야 한다. 오류·무응답·장면 누락은 실패다. 세 조건을 따로 기록하며 speaker=null만으로 정답 처리하지 않는다.
 
-근거 없는 화자 단정은 `speaker` 필드와 사용자에게 보이는 `explanation_ko` 등 설명문을 모두 대상으로 한다. 설명문의 발화자 주장을 사람 검토로 판정하고 인용·호명 대상·편집 설명과 구별해 근거 및 필드/설명별 건수를 남긴다. 단정이 있으면 화자 정답에서도 제외한다. C의 판정 코드·실제 측정은 아직 없다.
+근거 없는 화자 단정은 `speaker` 필드와 사용자에게 보이는 `explanation_ko` 등 설명문을 모두 대상으로 한다. 설명문의 발화자 주장을 사람 검토로 판정하고 인용·호명 대상·편집 설명과 구별해 근거 및 필드/설명별 건수를 남긴다. 단정이 있으면 화자 정답에서도 제외한다. 판정 코드는 `metrics.agent_metrics`이며 사용자에게 보이는 설명문은 고정 문구 4종이라 전수 점검했다.
 
 실측 요약은 [Day 1 마무리 보고서](../docs/reports/day1-completion.md)에 기록한다. 같은 실제 corpus를 재현하려면 공개하지 않은 자막을 별도로 확보해야 한다.
+
+## C 실행 (Ollama `qwen3:8b` 필요)
+
+```sh
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m eval.run_eval --dataset eval/private/gold.jsonl --systems A,B,C --control --output eval/private/day2-abc-gold.json
+```
+
+사설 gold는 `gold-approval.json`의 사람 승인 기록과 해시·ID가 일치할 때만 실행한다. 조건 `router_en`의 A/B는 C의 Router 첫 검색어를 재사용하고 `raw_ko`의 C-ko는 한국어 원문을 첫 검색어로 쓴다. `eval/private/agent-eval.jsonl`에는 Agent 단계별 지연 로그가 쌓인다(Git 제외).
