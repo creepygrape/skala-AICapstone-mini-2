@@ -1,7 +1,31 @@
 """Video-local 20s windows at 10s stride with immutable cue references."""
 
+import os
 from collections import defaultdict
 from backend.app.schemas import Chunk, Cue
+
+
+DEFAULT_WINDOW, DEFAULT_STRIDE, MAX_WINDOW = 20, 10, 120
+
+
+def chunk_settings(environ=None) -> tuple[int, int]:
+    """Chunk window and stride in seconds, from WISH_CHUNK_WINDOW / WISH_CHUNK_STRIDE (default 20 / 10).
+
+    The defaults are a design assumption that was never compared with other values; these variables
+    exist so that comparison can be run (eval/README.md). Invalid values fail at start-up.
+    """
+    environ = os.environ if environ is None else environ
+    values = []
+    for name, default in (("WISH_CHUNK_WINDOW", DEFAULT_WINDOW), ("WISH_CHUNK_STRIDE", DEFAULT_STRIDE)):
+        raw = environ.get(name)
+        try:
+            values.append(default if raw in (None, "") else int(raw))
+        except ValueError:
+            raise ValueError(f"{name} must be an integer number of seconds, got {raw!r}") from None
+    window, stride = values
+    if not 0 < stride <= window <= MAX_WINDOW:
+        raise ValueError(f"Require 0 < WISH_CHUNK_STRIDE <= WISH_CHUNK_WINDOW <= {MAX_WINDOW}, got stride={stride}, window={window}")
+    return window, stride
 
 
 def make_chunks(cues: list[Cue], window: int = 20, stride: int = 10) -> list[Chunk]:

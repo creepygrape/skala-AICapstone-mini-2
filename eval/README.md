@@ -73,3 +73,19 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m eval.run_eval --data
 ```
 
 사설 gold는 `gold-approval.json`의 사람 승인 기록과 해시·ID가 일치할 때만 실행한다. 조건 `router_en`의 A/B는 C의 Router 첫 검색어를 재사용하고 `raw_ko`의 C-ko는 한국어 원문을 첫 검색어로 쓴다. `eval/private/agent-eval.jsonl`에는 Agent 단계별 지연 로그가 쌓인다(Git 제외).
+
+## 청크 길이 비교 (20초/10초 기본값 검증)
+
+검색 청크는 영상별 `WISH_CHUNK_WINDOW`초 창을 `WISH_CHUNK_STRIDE`초씩 이동해 만든다(기본 20/10). 이 기본값은 설계 때 정한 가정이고 다른 값과 비교한 적이 없다([ADR-0006](../docs/adr/0006-time-window-provenance.md)). 같은 gold로 비교하려면 gold 승인 파일이 있는 PC에서 실행한다. A/B만 돌리므로 LLM 호출과 과금이 없다.
+
+```sh
+eval/chunk_sweep.sh                                   # 10/5, 20/10, 30/15, 40/20을 차례로 실행
+CHUNK_SETTINGS="15:5 20:10 60:30" eval/chunk_sweep.sh # 설정 지정
+eval/chunk_sweep.sh "--dataset eval/private/gold.jsonl --rewrites eval/private/gold.rewrites.json"  # 고정 영어 검색어 조건 포함
+```
+
+- 설정마다 새 dense 인덱스를 만든다(CPU에서 수 분, 이후 `data/index/`에 캐시).
+- 결과 파일 `eval/private/chunk-<창>-<이동>.json`의 `chunking`에 사용한 값이 기록된다. 같은 이름 파일은 덮어쓰지 않는다.
+- 실제 자막 3,750 cue 기준 청크 수: 10/5 = 1,712, 15/5 = 1,714, **20/10 = 869(기본)**, 30/15 = 580, 40/20 = 439, 60/30 = 294.
+- 비교 지표는 Scene Success@1, Hit@3(B, 한국어 원문 조건과 선택 시 고정 영어 조건). 청크가 길수록 의미 검색은 문맥을 더 보지만 시점 정확도가 떨어질 수 있다. 결과를 보기 전에 기본값을 바꾸지 않는다.
+- 후보 중복 제거(10초 이내)와 `get_scene_context`의 20초 창은 청크 길이와 무관하게 고정이라, 이 비교는 청크 길이 한 가지만 바꾼다.

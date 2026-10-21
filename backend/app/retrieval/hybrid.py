@@ -41,11 +41,12 @@ class LocalEncoder:
 
 
 class Retriever:
-    def __init__(self, catalog, encoder=None, cache_dir: Path | None = None):
+    def __init__(self, catalog, encoder=None, cache_dir: Path | None = None, *, chunk_window: int = 20, chunk_stride: int = 10):
         self.catalog = catalog
+        self.chunk_window, self.chunk_stride = chunk_window, chunk_stride
         self.cue_maps = {video_id: {c.cue_id: c for c in cues}
                          for video_id, cues in catalog.cues.items()}
-        self.chunks = make_chunks([c for group in catalog.cues.values() for c in group])
+        self.chunks = make_chunks([c for group in catalog.cues.values() for c in group], chunk_window, chunk_stride)
         self.tokenized = [tokens(c.text_for_retrieval) or [""] for c in self.chunks]
         self.keyword = BM25Plus(self.tokenized)
         self.encoder, self.vectors = encoder, None
