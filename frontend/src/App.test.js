@@ -33,6 +33,45 @@ describe('result guidance', () => {
   })
 })
 
+describe('grouped result cards', () => {
+  const at = (video_id, cue, start, text) => ({ ...card, video_id, cue_ids:[cue], start_seconds:start, evidence_text:text, title:`영상 ${video_id}` })
+  const results = [at('AAAAAAAAAAA','1',10,'first A'), at('BBBBBBBBBBB','5',20,'only B'), at('AAAAAAAAAAA','9',90,'second A')]
+
+  it('shows one card per video and lists its moments in rank order', async () => {
+    const html = await render(ResultList, { response: response('found', [], results) })
+    expect(html.match(/<article class=/g)).toHaveLength(2)                // A and B, not three cards
+    expect(html.match(/<button[^>]*aria-pressed/g)).toHaveLength(3)       // every moment stays selectable
+    expect(html.indexOf('first A')).toBeLessThan(html.indexOf('second A'))
+    expect(html.indexOf('second A')).toBeLessThan(html.indexOf('only B')) // A's card comes first: it holds the best moment
+    expect(html).toContain('영상 2개 · 시점 3개')
+    expect(html).toContain('시점 2개')                                    // badge on the card holding two moments
+    expect(html.match(/영상 AAAAAAAAAAA/g)).toHaveLength(1)               // title is not repeated per moment
+  })
+
+  it('puts the best-match marker on the top moment chip only', async () => {
+    const html = await render(ResultList, { response: response('found', [], results) })
+    expect(html.match(/가장 유력/g)).toHaveLength(1)
+    expect(html.indexOf('가장 유력')).toBeLessThan(html.indexOf('first A'))
+    expect(html.indexOf('가장 유력')).toBeGreaterThan(html.indexOf('class="stamps"'))
+  })
+
+  it('marks the selected moment and its card, and keeps other moments unselected', async () => {
+    const html = await render(ResultList, { response: response('found', [], results), selectedKey: 'AAAAAAAAAAA:9' })
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(1)
+    const withClass = name => new RegExp('class="(?=[^"]*\\b'+name+'\\b)(?=[^"]*\\bselected\\b)[^"]*"', 'g')
+    expect(html.match(withClass('stamp'))).toHaveLength(1)
+    expect(html.match(withClass('card'))).toHaveLength(1)
+  })
+
+  it('has no count badge or "most likely" marker for a single moment', async () => {
+    const html = await render(ResultList, { response: response('found', [], [results[0]]) })
+    expect(html).not.toContain('class="count"')
+    expect(html).not.toContain('가장 유력')
+    expect(html).toContain('영상 1개')
+    expect(html).not.toContain('시점 1개')
+  })
+})
+
 describe('agent progress bubble', () => {
   it('keeps finished steps with durations and shows the running one', async () => {
     const html = await render(AgentProgress, { busy: true, now: 0, steps: [
