@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 import re
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_PATH = 'data/profile.local.json'
@@ -20,6 +20,23 @@ class Entity(BaseModel):
     model_config = ConfigDict(extra='forbid')
     canonical: str = Field(min_length=1, max_length=40)
     aliases: list[str] = Field(default_factory=list, max_length=10)
+
+    @field_validator('canonical')
+    @classmethod
+    def _canonical_not_blank(cls, value):
+        # A blank form would match every subtitle line in Profile.mentions().
+        value = value.strip()
+        if not value:
+            raise ValueError('canonical must not be blank')
+        return value
+
+    @field_validator('aliases')
+    @classmethod
+    def _aliases_not_blank(cls, values):
+        cleaned = [value.strip() for value in values]
+        if any(not value or len(value) > 40 for value in cleaned):
+            raise ValueError('aliases must be 1-40 characters after trimming')
+        return cleaned
 
 
 class Profile(BaseModel):

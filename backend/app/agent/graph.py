@@ -1,6 +1,7 @@
 """Role-separated nodes, bounded replanning, no free-form source generation."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -178,8 +179,12 @@ class FinderAgent:
                     'can_replan':can_replan,'warnings':list(dict.fromkeys(warnings))}
         # Judge only candidates not seen in an earlier round: identical candidates carry no
         # new information, so re-asking would only spend calls and can flip a verdict.
+        # A verdict is reusable only for the same cue AND the same surrounding context the model
+        # saw: overlapping chunks can select one cue with different neighbours.
         judged = dict(state.get('judged',{}))
-        new = [r for r in state['grounded'] if evidence_key(r) not in judged]
+        fingerprint = {evidence_key(r):self._judged_key(r,state['contexts'][evidence_key(r)])
+                       for r in state['grounded']}
+        new = [r for r in state['grounded'] if fingerprint[evidence_key(r)] not in judged]
         if new:
             evidence = []
             for r in new:
@@ -192,8 +197,8 @@ class FinderAgent:
             ids = [j.evidence_id for j in decision.judgments]
             if len(ids)!=len(set(ids)) or set(ids)!=expected:
                 raise SearchFailure('model_invalid_evidence_ids')
-            judged.update({j.evidence_id:j.verdict for j in decision.judgments})
-        verdicts = {evidence_key(r):judged[evidence_key(r)] for r in state['grounded']}
+            judged.update({fingerprint[j.evidence_id]:j.verdict for j in decision.judgments})
+        verdicts = {evidence_key(r):judged[fingerprint[evidence_key(r)]] for r in state['grounded']}
         stats.note('verification', reused=len(state['grounded'])-len(new), verdicts=[
             {'evidence_id':evidence_key(r), 'start':r.start_seconds, 'quote':r.evidence_text,
              'verdict':verdicts[evidence_key(r)]} for r in state['grounded']])
@@ -219,6 +224,11 @@ class FinderAgent:
         return {'verdicts':verdicts,'judged':judged,
                 'relevant':relevant,'uncertain':uncertain_results,
                 'can_replan':can_replan,'warnings':list(dict.fromkeys(warnings))}
+
+    @staticmethod
+    def _judged_key(result, context):
+        cue_ids = ','.join(c.cue_id for c in context.cues)
+        return f'{evidence_key(result)}|{hashlib.sha1(cue_ids.encode()).hexdigest()[:12]}'
 
     def _after_verification(self, state):
         return 'replan' if state.get('can_replan') else 'finalize'

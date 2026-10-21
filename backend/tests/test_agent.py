@@ -510,3 +510,23 @@ def test_rewrite_receives_rejected_quotes_to_vary_key_nouns(tmp_path):
     asyncio.run(agent.run('장면'))
     [feedback]=model.feedbacks[:1]
     assert feedback==[{'verdict':'uncertain','quote':'(RIKU chose RIKU) Got myself'}]
+
+
+def test_same_cue_with_different_context_is_judged_again(tmp_path):
+    """Overlapping chunks can select one cue with different neighbours: reuse only same context."""
+    model=ScriptedModel(('uncertain','relevant'),rewrite_queries=('Got myself',))
+    agent,_=make_agent(tmp_path,model)
+    original=agent.tool_call
+    searches=0
+    async def changing(session_,name,args,schema):
+        nonlocal searches
+        result=await original(session_,name,args,schema)
+        if name=='search_transcripts':
+            searches+=1
+        if name=='get_scene_context' and searches>1:
+            result.cues=[c for c in result.cues if c.cue_id!='3']   # new context, same selected cue
+        return result
+    agent.tool_call=changing
+    response,_=asyncio.run(agent.run('장면'))
+    assert model.verified_ids==[['SYNTHETIC01:2'],['SYNTHETIC01:2']]   # asked again, not reused
+    assert response.status=='found' and response.search_attempts==2

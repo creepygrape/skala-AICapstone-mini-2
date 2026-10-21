@@ -70,3 +70,19 @@ def test_another_collection_changes_prompts_without_touching_code():
     other = Profile(name='cooking videos', subtitle_language='Japanese')
     system = OllamaModel(profile=other).messages(ROUTE_TASK.format(lang=other.subtitle_language), {})[0]['content']
     assert 'cooking videos' in system and 'concise Japanese retrieval query' in system and 'WISH' not in system
+
+
+@pytest.mark.parametrize('entity', [
+    {'canonical': '   '}, {'canonical': ''},
+    {'canonical': 'RIKU', 'aliases': ['']}, {'canonical': 'RIKU', 'aliases': ['  ']},
+    {'canonical': 'RIKU', 'aliases': ['x' * 41]},
+])
+def test_blank_names_and_aliases_are_rejected_before_they_can_match_every_line(entity):
+    with pytest.raises(Exception):
+        Profile.model_validate({'entities': [entity]})
+
+
+def test_names_are_trimmed_and_never_match_a_line_without_the_name():
+    profile = Profile.model_validate({'entities': [{'canonical': ' RIKU ', 'aliases': [' 리쿠 ']}]})
+    assert profile.entities[0].canonical == 'RIKU' and profile.entities[0].aliases == ['리쿠']
+    assert profile.mentions('Nobody is named here.') == ()
