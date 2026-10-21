@@ -26,7 +26,8 @@ onMounted(async () => {
 })
 // Jump to a moment and play; false whenever the embed is unavailable or errored (caller opens YouTube).
 const seek = (at, play = true) => scene?.seek(at, play) ?? false
-defineExpose({ seek })
+const pause = () => scene?.pause() ?? false
+defineExpose({ seek, pause })
 onBeforeUnmount(() => scene?.destroy())
 </script>
 

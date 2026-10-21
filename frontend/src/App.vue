@@ -158,6 +158,6 @@ function onKeydown(event) {
     </main>
     <div class="scrim" @click="sidebarOpen = false; detailOpen = false"></div>
     <DetailPanel :item="selected?.item" :cues="cues" :target-cue-id="selected ? String(selected.item.cue_ids[0]) : ''"
-      :loading="cuesLoading" :error="cuesError" :timing-sampled="timingSampled" @close="detailOpen = false" />
+      :loading="cuesLoading" :error="cuesError" :timing-sampled="timingSampled" :open="detailOpen" @close="detailOpen = false" />
   </div>
 </template>
