@@ -22,7 +22,7 @@ const timingSampled = ref(false)
 const sidebarOpen = ref(false)
 const detailOpen = ref(false)
 const thread = ref(null)
-const examples = ['리쿠가 마니또 뽑다가 자기 자신을 뽑은 장면', '료칸이 뭔지 물어본 부분', '료칸이 뭔지 물어본 멤버가 누구야?']
+const examples = ['한국어로 뭐냐고 묻는 장면', '고양이 귀여워하는 장면', '탁구치는 장면']
 let controller, ticker, contextController
 
 const active = computed(() => conversations.value.find(c => c.id === activeId.value) || null)
