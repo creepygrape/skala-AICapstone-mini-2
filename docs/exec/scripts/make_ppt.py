@@ -472,20 +472,6 @@ tb(s, 8.15, 1.7, 4.4, 4.2, [{'text': 'Multi-Agent를 쓰지 않은 이유', 'siz
                             {'text': 'Supervisor가 Agent를 고르고, Search Agent가 도구를 스스로 고르며, Verifier Agent는 판정만 한다', 'size': 14, 'color': INK}])
 
 # =========================================================================== notes + save
-for idx, text in NOTES.items():
-    prs.slides[idx - 1].notes_slide.notes_text_frame.text = text
 prs.save(str(OUT))
-lines = ['# WISH FINDER 발표 대본', '', '슬라이드의 발표자 노트와 같은 내용입니다. make_ppt.py가 pptx와 함께 생성합니다.', '']
-for i in sorted(NOTES):
-    title = ''
-    for sh in prs.slides[i - 1].shapes:
-        if sh.has_text_frame and sh.text_frame.text.strip():
-            title = sh.text_frame.text.strip().split('\n')[0]; break
-    head = '백업' if NOTES[i].startswith('[백업]') else f'{i}번'
-    lines += [f'## {head} — {title}', '', NOTES[i], '']
-(BASE / '발표대본.md').write_text('\n'.join(lines), encoding='utf-8')
-main_chars = sum(len(NOTES[i].split('] ', 1)[-1]) for i in range(1, 8))
-print('saved', OUT, '| slides', len(prs.slides), '| script chars (1-7):', main_chars)
-for i in range(1, 8):
-    print(i, len(NOTES[i].split('] ', 1)[-1]))
-print('part1 (1-4):', sum(len(NOTES[i].split('] ', 1)[-1]) for i in (1, 2, 3, 4)), '| part2 (5-7):', sum(len(NOTES[i].split('] ', 1)[-1]) for i in (5, 6, 7)))
+
+print('saved', OUT, '| slides', len(prs.slides))
