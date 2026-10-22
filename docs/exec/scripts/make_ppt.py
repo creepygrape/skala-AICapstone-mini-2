@@ -182,9 +182,8 @@ tb(s, 1.2, 5.9, 10.9, 0.9, [{'text': 'AI 서비스 Mini Project  ·  과제 2 (�
 
 # =========================================================================== 2. problem -> solution + tasks
 n2 = ('팬들은 "마니또를 뽑다가 자기 자신을 뽑은 장면"처럼 상황만 기억하고 제목이나 대사는 모릅니다. '
-      '그래서 장면을 한국어로 설명하면 자막에서 후보를 찾고, 원본 자막과 다시 대조해 검증한 영상 시점을 알려 주는 Agent를 만들었습니다. '
-      '세부 task는 자막 파싱과 청킹, 하이브리드 검색, LangGraph Agent, MCP 서버, 웹 화면과 실시간 전송, 평가와 추적입니다. '
-      '자막이 영어 번역본이고 화자 표시가 없어서 화자는 단정하지 않습니다.')
+      '그래서 장면을 설명하면 원본 자막으로 검증한 영상 시점을 알려 주는 Agent를 만들었습니다. '
+      '세부 task는 파싱·청킹, Hybrid 검색, LangGraph, MCP 서버, 웹 화면, 평가입니다. 자막이 영어 번역본이고 화자 표시가 없어 화자는 단정하지 않습니다.')
 s = new_slide('장면을 설명하면, 원본 자막으로 검증한 시점을 찾아 준다', notes='[40초] ' + n2)
 table(s, 0.6, 1.55, 6.3, [1.3, 5.0],
       [['구분', '내용'],
@@ -201,23 +200,16 @@ table(s, 0.6, 5.45, 12.2, [2.0, 2.04, 2.04, 2.04, 2.04, 2.04],
       size=12, row_h=0.55)
 
 # =========================================================================== 3. results
-n3 = ('결과입니다. A는 키워드 검색, B는 Hybrid 검색, C는 Hybrid에 검증과 재검색을 더한 Agent입니다. 같은 20문항 평가셋에서 Agent는 장면 질문 18개 중 16개를 1위로 맞혔고 일반 검색은 11에서 15개였습니다. '
-      '차이가 작고 한 번만 실행해서 우위는 단정하지 않습니다. 개선 전후로 화자 질문 처리는 2개에서 3개로 늘었지만 입력 토큰은 24% 늘었습니다. '
-      '근거 없이 화자를 단정한 경우는 0건이었습니다. 이중 첫 검색은 켜도 16으로 같아 꺼 두었고, 청크는 20초와 10초를 유지했습니다. '
-      '이제 이 결과를 만든 구조와 핵심 코드를 설명드리겠습니다.')
-s = new_slide('결과: 16/18을 맞혔고, 근거 없는 화자 단정은 0건', notes='[55초] ' + n3)
-tb(s, 0.6, 1.5, 6.9, 0.4, [{'text': '개선 전/후 (OpenAI, 같은 평가셋·같은 모델)', 'size': 16, 'bold': True, 'color': MUTED}])
-table(s, 0.6, 1.95, 6.9, [3.3, 1.2, 1.2, 1.2],
-      [['지표', 'v2', 'v3', '변화'],
-       ['1위 적중 (18문항)', '16', '16', '같음'],
-       ['화자 질문 처리 (4문항)', '2', '3', '+1'],
-       ['LLM 호출 (20문항)', '50', '42', '−16%'],
-       ['평균 지연', '2.88초', '2.57초', '−11%'],
-       ['입력 토큰 (C+C-ko)', '56,941', '70,770', '+24%']],
-      size=16, row_h=0.56, hl_rows=(5,))
-tb(s, 7.9, 1.5, 4.9, 0.4, [{'text': 'A / B / C 1위 적중 수 (18문항 중)', 'size': 16, 'bold': True, 'color': MUTED}])
+n3 = ('결과입니다. 평가는 20문항이고, 장면 질문 18개 중 1위로 정답을 맞힌 수는 키워드 검색 A가 13개, Hybrid 검색 B가 15개, 검증과 재검색을 더한 Agent C가 16개입니다. '
+      '차이가 작고 한 번만 실행해서 우위는 단정하지 않습니다. 개선한 v3는 화자 질문 판정 기준, 번역 자막 대응, 중복 재검색 제거, 검색어 재작성을 고쳤습니다. '
+      '그 결과 화자 질문 처리가 2개에서 3개로 늘고 LLM 호출이 16% 줄었지만, 입력 토큰은 24% 늘고 틀린 장면을 찾음으로 답한 사례가 1건 생겼습니다. '
+      '근거 없는 화자 단정은 0건입니다. 이중 첫 검색은 켜도 결과가 같아 꺼 두었고, 청크는 20초와 10초를 유지했습니다. '
+      '한계는 후속 질문과 번역 어휘 차이, Multi-Agent 미구현입니다. 이제 구조와 핵심 코드를 설명드리겠습니다.')
+s = new_slide('결과: 16/18을 맞혔고, 근거 없는 화자 단정은 0건', notes='[60초] ' + n3)
+# left: A/B/C chart (introduced first in the narration)
+tb(s, 0.6, 1.5, 5.6, 0.4, [{'text': 'A / B / C 1위 적중 수 (18문항 중)', 'size': 16, 'bold': True, 'color': MUTED}])
 cd = CategoryChartData(); cd.categories = ['A 키워드', 'B Hybrid', 'C Agent']; cd.add_series('1위 적중', (13, 15, 16))
-gf = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(7.8), Inches(1.9), Inches(5.0), Inches(3.2), cd)
+gf = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(0.5), Inches(1.9), Inches(5.7), Inches(3.0), cd)
 ch = gf.chart
 ch.has_legend = False; ch.has_title = False
 ch.font.size = Pt(14); ch.font.name = FONT
@@ -230,17 +222,29 @@ va = ch.value_axis; va.maximum_scale = 18; va.minimum_scale = 0; va.major_unit =
 va.has_major_gridlines = True; va.major_gridlines.format.line.color.rgb = rgb('E3E7F1')
 va.format.line.fill.background(); va.tick_labels.font.size = Pt(13); va.tick_labels.font.color.rgb = rgb(MUTED)
 ch.category_axis.tick_labels.font.size = Pt(14); ch.category_axis.format.line.color.rgb = rgb('C9D0E0')
-tb(s, 7.9, 5.17, 4.9, 0.55, [{'text': 'A 키워드 · B Hybrid(키워드+의미) · C Agent(Hybrid+검증·재검색)', 'size': 11, 'color': MUTED, 'after': 1},
-                            {'text': '같은 영어 검색어 조건 · 1~5문항 차이, 1회 실행이라 우위 단정 안 함', 'size': 11, 'color': MUTED}])
-foot = [('0건', ACCENT, SOFT, '근거 없이 화자를 단정한 경우'),
-        ('16 → 16', ACCENT, SOFT, '이중 첫 검색을 켜도 같음, 검색만 80 → 98회 → 기본 꺼짐'),
-        ('20초/10초', ACCENT, SOFT, '청크 길이 비교 후 유지 (30/15 이상은 하락)'),
-        ('한계', INK, SOFT, '후속 질문·번역 어휘 차이, Multi-Agent 미구현')]
+tb(s, 0.6, 4.95, 5.6, 0.7, [{'text': 'A 키워드 · B Hybrid(키워드+의미) · C Agent(Hybrid+검증·재검색)', 'size': 12, 'color': MUTED, 'after': 1},
+                           {'text': '같은 영어 검색어 조건 · 1~3문항 차이, 1회 실행이라 우위 단정 안 함', 'size': 12, 'color': MUTED}])
+# right: v2 -> v3 table + what was improved
+tb(s, 6.6, 1.5, 6.2, 0.4, [{'text': '개선 전/후 (OpenAI, 같은 평가셋)', 'size': 16, 'bold': True, 'color': MUTED}])
+table(s, 6.6, 1.95, 6.15, [2.95, 1.0, 1.0, 1.2],
+      [['지표', 'v2', 'v3', '변화'],
+       ['1위 적중 (18문항)', '16', '16', '같음'],
+       ['화자 질문 처리 (4문항)', '2', '3', '+1'],
+       ['LLM 호출 (20문항)', '50', '42', '−16%'],
+       ['평균 지연', '2.88초', '2.57초', '−11%'],
+       ['입력 토큰 (C+C-ko)', '56,941', '70,770', '+24%'],
+       ['틀린 장면을 "찾음"', '0건', '1건', '+1']],
+      size=14, row_h=0.45, hl_rows=(5, 6))
+tb(s, 6.6, 5.12, 6.15, 0.6, [{'text': 'v3 개선: 화자 질문 판정 기준 · 번역 자막 대응 · 중복 재검색 제거 · 검색어 재작성', 'size': 12, 'color': MUTED}])
+foot = [('0건', ACCENT, SOFT, ['근거 없이 화자를 단정한 경우']),
+        ('16 → 16', ACCENT, SOFT, ['이중 첫 검색을 켜도 결과 같음.', '검색만 80 → 98회', '기본 꺼짐으로 설정']),
+        ('20초/10초', ACCENT, SOFT, ['청크 길이 비교 후 유지', '1위 적중: 10/5=11 · 20/10=11', '30/15=9 · 40/20=5']),
+        ('한계', INK, SOFT, ['후속 질문·번역 어휘 차이', 'Multi-Agent 미구현'])]
 for i, (big, col, tint, small) in enumerate(foot):
     x = 0.6 + i * 3.07
-    card(s, x, 5.78, 2.95, 1.15, tint)
-    tb(s, x + 0.15, 5.8, 2.65, 0.45, [{'text': big, 'size': 22, 'bold': True, 'color': col}], anchor=MSO_ANCHOR.MIDDLE)
-    tb(s, x + 0.15, 6.27, 2.65, 0.62, [{'text': small, 'size': 12, 'color': INK, 'line': 1.0}])
+    card(s, x, 5.72, 2.95, 1.25, tint)
+    tb(s, x + 0.15, 5.74, 2.65, 0.4, [{'text': big, 'size': 20, 'bold': True, 'color': col}], anchor=MSO_ANCHOR.MIDDLE)
+    tb(s, x + 0.15, 6.16, 2.65, 0.78, [{'text': t, 'size': 12, 'color': INK, 'line': 1.0, 'after': 0} for t in small])
 
 # =========================================================================== 4. architecture + tech elements
 n4 = ('전체 구조입니다. 화면의 질문은 FastAPI를 거쳐 LangGraph Agent로 가고, Agent는 MCP 서버를 통해서만 자막을 조회합니다. '
