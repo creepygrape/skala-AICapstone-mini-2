@@ -101,7 +101,7 @@ def new_slide(title=None, dark=False, num=None, notes=''):
         tb(s, 0.6, 0.38, 12.1, 0.95, [{'text': title, 'size': 30, 'bold': True, 'color': WHITE if dark else NAVY, 'line': 1.0}],
            anchor=MSO_ANCHOR.MIDDLE)
     n = len(prs.slides)
-    tb(s, 0.6, 7.03, 6, 0.3, [{'text': 'G078 문희주  ·  WISH FINDER', 'size': 11, 'color': 'AEB6CC' if dark else '8A93A8'}])
+    tb(s, 0.6, 7.03, 6, 0.3, [{'text': '광주 3반 G078 문희주  ·  WISH FINDER', 'size': 11, 'color': 'AEB6CC' if dark else '8A93A8'}])
     if num != 'none':
         tb(s, 11.9, 7.03, 0.85, 0.3, [{'text': str(n), 'size': 11, 'color': 'AEB6CC' if dark else '8A93A8', 'align': PP_ALIGN.RIGHT}])
     NOTES[n] = notes
@@ -121,16 +121,15 @@ def code_box(slide, x, y, w, h, lines, hl=(), size=13, caption=None):
 
 
 def _bottom_rule(cell, color=LINE):
+    """Hairline under each row. Only lnB is written; PowerPoint is strict about tcPr children, and the fill must follow the borders."""
     tcPr = cell._tc.get_or_add_tcPr()
-    for tag in ('a:lnL', 'a:lnR', 'a:lnT'):
-        ln = tcPr.makeelement(qn(tag), {'w': '0'}); ln.append(ln.makeelement(qn('a:noFill'), {})); tcPr.append(ln)
-    ln = tcPr.makeelement(qn('a:lnB'), {'w': '9525', 'cap': 'flat', 'cmpd': 'sng', 'algn': 'ctr'})
-    sf = ln.makeelement(qn('a:solidFill'), {}); clr = sf.makeelement(qn('a:srgbClr'), {'val': color}); sf.append(clr); ln.append(sf)
-    tcPr.append(ln)
-    # schema order: borders must precede the fill
+    ln = tcPr.makeelement(qn('a:lnB'), {'w': '9525'})
+    sf = ln.makeelement(qn('a:solidFill'), {}); sf.append(sf.makeelement(qn('a:srgbClr'), {'val': color})); ln.append(sf)
     fill = tcPr.find(qn('a:solidFill'))
     if fill is not None:
-        tcPr.remove(fill); tcPr.append(fill)
+        fill.addprevious(ln)       # border before fill (schema order)
+    else:
+        tcPr.append(ln)
 
 
 def table(slide, x, y, w, cols, rows, size=16, header_fill=SOFT, row_h=0.5, bold_first=False, hl_rows=(), align='center'):
@@ -153,8 +152,10 @@ def table(slide, x, y, w, cols, rows, size=16, header_fill=SOFT, row_h=0.5, bold
             tf.word_wrap = True
             para = tf.paragraphs[0]
             para.alignment = PP_ALIGN.LEFT if (j == 0 or align == 'left') else PP_ALIGN.CENTER
-            r = para.add_run(); r.text = val
-            set_font(r, size, True if (i == 0 or (bold_first and j == 0)) else False, INK)
+            for k, part in enumerate(val.split('\n')):
+                if k: para.add_line_break()
+                r = para.add_run(); r.text = part
+                set_font(r, size, True if (i == 0 or (bold_first and j == 0)) else False, INK)
     return gt
 
 
@@ -170,16 +171,14 @@ def chip(slide, x, y, w, h, text, fill, color=WHITE, size=14, bold=True):
 
 
 # =========================================================================== 1. cover
-n1 = ('안녕하세요, G078 문희주입니다. 제 과제는 WISH FINDER입니다. '
+n1 = ('안녕하세요, 광주 3반 G078 문희주입니다. 제 과제는 WISH FINDER입니다. '
       '영상 속 장면이 어렴풋이만 기억날 때, 그 장면을 설명하면 영상의 정확한 시점을 찾아 주는 AI Agent입니다.')
 s = new_slide(num='none', notes='[10초] ' + n1)
-tb(s, 0.8, 1.7, 6.8, 1.2, [{'text': 'WISH FINDER', 'size': 60, 'bold': True, 'color': INK}], anchor=MSO_ANCHOR.MIDDLE)
-tb(s, 0.8, 3.0, 6.6, 1.4, [{'text': '기억 속 장면을 찾아 주는', 'size': 28, 'color': MUTED, 'after': 2},
-                           {'text': '근거 기반 AI Agent', 'size': 28, 'bold': True, 'color': ACCENT}])
-chip(s, 0.8, 4.75, 2.9, 0.62, 'G078  문희주', ACCENT, size=22)
-tb(s, 0.8, 5.65, 6.6, 0.9, [{'text': 'AI 서비스 Mini Project  ·  과제 2 (신규 Agent)', 'size': 18, 'color': MUTED, 'after': 4},
-                           {'text': '첫 적용 대상: NCT WISH 영상 3편', 'size': 18, 'color': MUTED}])
-pic(s, SH / '01_home.png', 7.75, 1.3, w=5.05)
+tb(s, 1.2, 1.9, 10.9, 1.3, [{'text': 'WISH FINDER', 'size': 72, 'bold': True, 'color': INK}], anchor=MSO_ANCHOR.MIDDLE)
+tb(s, 1.2, 3.3, 10.9, 1.5, [{'text': '기억 속 장면을 찾아 주는', 'size': 32, 'color': MUTED, 'after': 2},
+                            {'text': '근거 기반 AI Agent', 'size': 32, 'bold': True, 'color': ACCENT}])
+chip(s, 1.2, 5.0, 4.6, 0.66, '광주 3반  G078  문희주', ACCENT, size=22)
+tb(s, 1.2, 5.9, 10.9, 0.9, [{'text': 'AI 서비스 Mini Project  ·  과제 2 (신규 Agent)  ·  첫 적용 대상: NCT WISH 영상 3편', 'size': 18, 'color': MUTED}])
 
 # =========================================================================== 2. problem -> solution + tasks
 n2 = ('팬들은 "마니또를 뽑다가 자기 자신을 뽑은 장면"처럼 상황만 기억하고 제목이나 대사는 모릅니다. '
@@ -190,8 +189,8 @@ s = new_slide('장면을 설명하면, 원본 자막으로 검증한 시점을 �
 table(s, 0.6, 1.55, 6.3, [1.3, 5.0],
       [['구분', '내용'],
        ['문제', '제목도 대사도 모르고 "그 장면"만 기억난다'],
-       ['해결', '검색 → 원본 cue 대조 → 의미 판정 → 영상 시점과 앞뒤 자막'],
-       ['제약', '자막은 영어 번역본이고 화자 표시가 없어, 화자는 단정하지 않는다']],
+       ['해결', '검색 → 원본 cue 대조 → 의미 판정\n→ 영상 시점과 앞뒤 자막'],
+       ['제약', '자막은 영어 번역본이고 화자 표시가 없어,\n화자는 단정하지 않는다']],
       size=15, row_h=0.8, bold_first=True, align='left')
 pic(s, SH / '03_result_detail.png', 7.2, 1.55, w=5.6)
 tb(s, 7.2, 5.05, 5.6, 0.3, [{'text': '결과 화면: 검증된 장면 카드, 영상, 원본 앞뒤 자막', 'size': 12, 'color': MUTED}])
@@ -202,11 +201,11 @@ table(s, 0.6, 5.45, 12.2, [2.0, 2.04, 2.04, 2.04, 2.04, 2.04],
       size=12, row_h=0.55)
 
 # =========================================================================== 3. results
-n3 = ('결과입니다. 같은 20문항 평가셋으로 Agent는 장면 질문 18개 중 16개를 1위로 맞혔고, 일반 검색은 11에서 15개였습니다. '
-      '차이가 1에서 5문항이고 한 번만 실행해서 우위는 단정하지 않습니다. 개선 전후로는 화자 질문 처리가 2개에서 3개로 늘고 LLM 호출이 16% 줄었지만 입력 토큰은 24% 늘었습니다. '
-      '근거 없이 화자를 단정한 경우는 0건이었습니다. 오늘 다시 측정한 이중 첫 검색은 켜도 16으로 같고 검색만 늘어 꺼 두었고, 청크는 20초와 10초를 유지했습니다. '
-      '한계는 후속 질문과 번역 어휘 차이, 그리고 Multi-Agent를 구현하지 않은 점입니다.')
-s = new_slide('결과: 16/18을 맞혔고, 근거 없는 화자 단정은 0건', notes='[65초] ' + n3)
+n3 = ('결과입니다. A는 키워드 검색, B는 Hybrid 검색, C는 Hybrid에 검증과 재검색을 더한 Agent입니다. 같은 20문항 평가셋에서 Agent는 장면 질문 18개 중 16개를 1위로 맞혔고 일반 검색은 11에서 15개였습니다. '
+      '차이가 작고 한 번만 실행해서 우위는 단정하지 않습니다. 개선 전후로 화자 질문 처리는 2개에서 3개로 늘었지만 입력 토큰은 24% 늘었습니다. '
+      '근거 없이 화자를 단정한 경우는 0건이었습니다. 이중 첫 검색은 켜도 16으로 같아 꺼 두었고, 청크는 20초와 10초를 유지했습니다. '
+      '이제 이 결과를 만든 구조와 핵심 코드를 설명드리겠습니다.')
+s = new_slide('결과: 16/18을 맞혔고, 근거 없는 화자 단정은 0건', notes='[55초] ' + n3)
 tb(s, 0.6, 1.5, 6.9, 0.4, [{'text': '개선 전/후 (OpenAI, 같은 평가셋·같은 모델)', 'size': 16, 'bold': True, 'color': MUTED}])
 table(s, 0.6, 1.95, 6.9, [3.3, 1.2, 1.2, 1.2],
       [['지표', 'v2', 'v3', '변화'],
@@ -218,7 +217,7 @@ table(s, 0.6, 1.95, 6.9, [3.3, 1.2, 1.2, 1.2],
       size=16, row_h=0.56, hl_rows=(5,))
 tb(s, 7.9, 1.5, 4.9, 0.4, [{'text': 'A / B / C 1위 적중 수 (18문항 중)', 'size': 16, 'bold': True, 'color': MUTED}])
 cd = CategoryChartData(); cd.categories = ['A 키워드', 'B Hybrid', 'C Agent']; cd.add_series('1위 적중', (13, 15, 16))
-gf = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(7.8), Inches(1.9), Inches(5.0), Inches(3.45), cd)
+gf = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(7.8), Inches(1.9), Inches(5.0), Inches(3.2), cd)
 ch = gf.chart
 ch.has_legend = False; ch.has_title = False
 ch.font.size = Pt(14); ch.font.name = FONT
@@ -231,7 +230,8 @@ va = ch.value_axis; va.maximum_scale = 18; va.minimum_scale = 0; va.major_unit =
 va.has_major_gridlines = True; va.major_gridlines.format.line.color.rgb = rgb('E3E7F1')
 va.format.line.fill.background(); va.tick_labels.font.size = Pt(13); va.tick_labels.font.color.rgb = rgb(MUTED)
 ch.category_axis.tick_labels.font.size = Pt(14); ch.category_axis.format.line.color.rgb = rgb('C9D0E0')
-tb(s, 7.9, 5.35, 4.9, 0.4, [{'text': '같은 영어 검색어 조건 · 1~5문항 차이, 1회 실행이라 우위 단정 안 함', 'size': 12, 'color': MUTED}])
+tb(s, 7.9, 5.17, 4.9, 0.55, [{'text': 'A 키워드 · B Hybrid(키워드+의미) · C Agent(Hybrid+검증·재검색)', 'size': 11, 'color': MUTED, 'after': 1},
+                            {'text': '같은 영어 검색어 조건 · 1~5문항 차이, 1회 실행이라 우위 단정 안 함', 'size': 11, 'color': MUTED}])
 foot = [('0건', ACCENT, SOFT, '근거 없이 화자를 단정한 경우'),
         ('16 → 16', ACCENT, SOFT, '이중 첫 검색을 켜도 같음, 검색만 80 → 98회 → 기본 꺼짐'),
         ('20초/10초', ACCENT, SOFT, '청크 길이 비교 후 유지 (30/15 이상은 하락)'),
@@ -244,8 +244,8 @@ for i, (big, col, tint, small) in enumerate(foot):
 
 # =========================================================================== 4. architecture + tech elements
 n4 = ('전체 구조입니다. 화면의 질문은 FastAPI를 거쳐 LangGraph Agent로 가고, Agent는 MCP 서버를 통해서만 자막을 조회합니다. '
-      '이제 핵심 코드 세 가지, Agent Graph와 MCP, RAG를 설명드리겠습니다.')
-s = new_slide('LangGraph · MCP · RAG를 하나의 흐름으로 엮었다', notes='[15초] ' + n4)
+      '자막 검색은 키워드와 의미 검색을 합친 Hybrid 방식입니다. 이제 핵심 코드 세 가지, Agent Graph와 MCP, RAG를 설명드리겠습니다.')
+s = new_slide('LangGraph · MCP · RAG를 하나의 흐름으로 엮었다', notes='[20초] ' + n4)
 pic(s, DG / 'architecture.png', 0.5, 1.6, w=7.4, frame=False)
 table(s, 8.1, 1.6, 4.75, [1.55, 3.2],
       [['구성', '내용'],
@@ -344,7 +344,7 @@ code_box(s, 7.05, 1.5, 5.8, 5.1, MCP_CODE, hl={0, 8, 15, 16}, size=13,
 n7 = ('RAG입니다. 자막 3,750줄을 영상별로 20초씩, 10초 겹치게 묶어 청크 869개를 만들었습니다. '
       '키워드 검색 상위 20개와 의미 검색 상위 20개를 RRF로 합치는데, 순위가 r인 후보에 1 나누기 60 더하기 r 점수를 주고 더합니다. '
       '청크는 cue 번호를 가지고 있어 결과가 항상 원본 자막 줄로 돌아갑니다. 청크 길이는 10초 5초, 30초 15초, 40초 20초와도 비교했고 20초 10초를 유지했습니다. '
-      '가장 크게 배운 것은 문제가 구조보다 번역 자막의 단어 같은 데이터에 있었다는 점입니다. 감사합니다.')
+      '가장 크게 배운 것은 같은 질문도 표현에 따라 결과가 달라져서, 한 번 잘 나온 결과를 믿지 말고 측정으로 확인해야 한다는 점입니다. 감사합니다.')
 s = new_slide('RAG: 두 검색을 RRF로 합치고 원본 cue로 되돌린다', notes='[55초] ' + n7)
 steps = [('자막 cue 3,750줄', TINT_GRAY, GRAY), ('청크 869개  (20초 단위, 10초 겹침)', TINT_BLUE, BLUE),
          ('BM25 상위 20  +  bge-m3 상위 20', TINT_GREEN, GREEN), ('RRF로 순위 합치기', TINT_AMBER, 'B9770E'),
@@ -377,29 +377,19 @@ tb(s, 7.1, 5.55, 5.5, 1.05, [{'text': '점수 = Σ  1 / (60 + 순위)', 'size': 
    anchor=MSO_ANCHOR.MIDDLE)
 
 # =========================================================================== 8. limits + next
-n8 = ('[백업] 질문 대비: 한계와 측정 결과. 한계는 세 가지입니다. Agent 우위는 우연일 수 있고, 지연과 토큰이 늘었으며, 후속 질문이나 번역 어휘 차이에서 틀리거나 못 찾는 경우가 있습니다. '
-      '측정도 두 가지 마쳤습니다. 청크 길이는 20초와 10초를 유지했고, 이중 첫 검색은 16에서 16으로 이득이 없어 기본값을 끈 채 두었습니다. '
-      '이후에는 서비스가 여러 장면을 연결해 조사하는 형태로 커질 때 Supervisor 구조를 비교하려고 합니다.')
-s = new_slide('[백업] 한계와 측정 결과: 구조보다 데이터가 문제였다', notes=n8)
-tb(s, 0.6, 1.5, 5.9, 0.45, [{'text': '한계와 트레이드오프', 'size': 20, 'bold': True, 'color': INK}])
-tb(s, 6.85, 1.5, 5.9, 0.45, [{'text': '측정 결과와 이후', 'size': 20, 'bold': True, 'color': BLUE}])
-lim = [('Agent 우위가 불확실', '1~5문항 차이, 질문당 1회 실행'),
-       ('지연과 토큰 증가', '평균 2.6초, 입력 토큰 +24%'),
-       ('틀리거나 못 찾는 경우', '후속 질문, 번역 어휘 차이 (이중 검색도 해결 못 함)')]
-nxt = [('이후: Supervisor 구조 비교', '더 복잡한 서비스로 넓힐 때 전환'),
-       ('청크 길이: 20초/10초 유지', '10/5와 같고 30/15·40/20은 하락 (B, 18문항)'),
-       ('이중 첫 검색: 평가셋 이득 없음', '16 → 16, 검색 +1회 → 기본 꺼짐 유지')]
-for i in range(3):
-    y = 2.05 + i * 1.28
-    card(s, 0.6, y, 5.9, 1.12, TINT_AMBER)
-    tb(s, 0.85, y + 0.1, 5.4, 0.95, [{'text': lim[i][0], 'size': 18, 'bold': True, 'color': NAVY, 'after': 3},
-                                     {'text': lim[i][1], 'size': 15, 'color': MUTED}], anchor=MSO_ANCHOR.MIDDLE)
-    card(s, 6.85, y, 5.9, 1.12, TINT_BLUE)
-    tb(s, 7.1, y + 0.1, 5.4, 0.95, [{'text': nxt[i][0], 'size': 18, 'bold': True, 'color': NAVY, 'after': 3},
-                                    {'text': nxt[i][1], 'size': 15, 'color': MUTED}], anchor=MSO_ANCHOR.MIDDLE)
-card(s, 0.6, 5.95, 12.15, 0.9, ACCENT_SOFT)
-tb(s, 0.9, 5.95, 11.6, 0.9, [{'text': '원인은 구조가 아니라 번역 자막의 단어("마니또" ↔ "Secret Santa")였다',
-                              'size': 19, 'bold': True, 'color': ACCENT}], anchor=MSO_ANCHOR.MIDDLE)
+n8 = ('[백업] 질문 대비: 한계와 트레이드오프. 측정, 성능, 비용·범위 세 갈래로 정리합니다. 측정은 18문항에 질문당 1회라 1에서 2문항 차이는 우연일 수 있고, 정답 라벨은 어시스턴트가 원본 자막을 검토해 제안하고 제가 승인한 것이며 영상 대조는 9곳 표본입니다. '
+      '성능에서는 찾음 응답 17건 중 1건이 틀린 장면이었고, 정답 청크가 후보 3개 밖에 있던 문항이 두 개 있었습니다. 비용은 입력 토큰이 24% 늘고 평균 지연이 2.6초입니다. '
+      '범위로는 Multi-Agent를 구현하거나 비교하지 않았고, 영어 번역 자막이라 화자를 단정할 수 없습니다.')
+s = new_slide('[백업] 한계와 트레이드오프', notes=n8)
+table(s, 0.6, 1.5, 12.15, [1.5, 8.3, 2.35],
+      [['구분', '한계', '근거'],
+       ['측정', '18문항·질문당 1회, Router 검색어가 실행마다 달라져 1~2문항 차이는 노이즈일 수 있다', '보고서 3.4·4.3절'],
+       ['측정', '정답 라벨은 어시스턴트가 원본 cue를 검토해 제안하고 사용자가 승인. 영상 대조는 9곳 표본', '보고서 4.3절'],
+       ['성능', '"찾음" 응답 17건 중 1건이 틀린 장면(16/17). 원본 대조는 의도 일치를 보장하지 않는다', '보고서 3.2·4.2절'],
+       ['성능', '정답 청크가 후보 3개 밖(10위·18위)인 2문항은 판정 이전 단계의 한계. 번역 어휘·후속 질문도 약점', '보고서 4.2절'],
+       ['비용', '입력 토큰 +24%, 평균 지연 2.6초(Hybrid 0.2초대), 이중 첫 검색은 검색 +1회', '보고서 3.2·3.3절'],
+       ['범위', 'Multi-Agent 미구현·미비교, 영어 번역 자막, 화자 단정 불가', '보고서 4.1·4.3절']],
+      size=14, row_h=0.74, bold_first=True, align='left')
 
 # =========================================================================== backup B1: LangSmith
 nb1 = '[백업] 질문 대비: LangSmith 추적. 평가 두 번의 합계가 트레이스 160개, 모델 호출 188회, 토큰 135.5K, 비용 $0.30입니다. 재검색이 있으면 지연·LLM 호출·토큰이 대략 두 배가 됩니다.'
@@ -481,8 +471,17 @@ tb(s, 8.15, 1.7, 4.4, 4.2, [{'text': 'Multi-Agent를 쓰지 않은 이유', 'siz
 for idx, text in NOTES.items():
     prs.slides[idx - 1].notes_slide.notes_text_frame.text = text
 prs.save(str(OUT))
+lines = ['# WISH FINDER 발표 대본', '', '슬라이드의 발표자 노트와 같은 내용입니다. make_ppt.py가 pptx와 함께 생성합니다.', '']
+for i in sorted(NOTES):
+    title = ''
+    for sh in prs.slides[i - 1].shapes:
+        if sh.has_text_frame and sh.text_frame.text.strip():
+            title = sh.text_frame.text.strip().split('\n')[0]; break
+    head = '백업' if NOTES[i].startswith('[백업]') else f'{i}번'
+    lines += [f'## {head} — {title}', '', NOTES[i], '']
+(BASE / '발표대본.md').write_text('\n'.join(lines), encoding='utf-8')
 main_chars = sum(len(NOTES[i].split('] ', 1)[-1]) for i in range(1, 8))
 print('saved', OUT, '| slides', len(prs.slides), '| script chars (1-7):', main_chars)
 for i in range(1, 8):
     print(i, len(NOTES[i].split('] ', 1)[-1]))
-print('part1 (1-3):', sum(len(NOTES[i].split('] ', 1)[-1]) for i in (1, 2, 3)), '| part2 (4-7):', sum(len(NOTES[i].split('] ', 1)[-1]) for i in (4, 5, 6, 7)))
+print('part1 (1-4):', sum(len(NOTES[i].split('] ', 1)[-1]) for i in (1, 2, 3, 4)), '| part2 (5-7):', sum(len(NOTES[i].split('] ', 1)[-1]) for i in (5, 6, 7)))
