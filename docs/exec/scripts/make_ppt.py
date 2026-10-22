@@ -349,10 +349,10 @@ n7 = ('RAG입니다. 자막 3,750줄을 영상별로 20초씩, 10초 겹치게 �
       '키워드 검색 상위 20개와 의미 검색 상위 20개를 RRF로 합치는데, 순위가 r인 후보에 1 나누기 60 더하기 r 점수를 주고 더합니다. '
       '청크는 cue 번호를 가지고 있어 결과가 항상 원본 자막 줄로 돌아갑니다. 청크 길이는 10초 5초, 30초 15초, 40초 20초와도 비교했고 20초 10초를 유지했습니다. '
       '가장 크게 배운 것은 같은 질문도 표현에 따라 결과가 달라져서, 한 번 잘 나온 결과를 믿지 말고 측정으로 확인해야 한다는 점입니다. 감사합니다.')
-s = new_slide('RAG: 두 검색을 RRF로 합치고 원본 cue로 되돌린다', notes='[55초] ' + n7)
+s = new_slide('RAG: 두 검색을 RRF로 합치고 대표 cue를 고른다', notes='[55초] ' + n7)
 steps = [('자막 cue 3,750줄', TINT_GRAY, GRAY), ('청크 869개  (20초 단위, 10초 겹침)', TINT_BLUE, BLUE),
          ('BM25 상위 20  +  bge-m3 상위 20', TINT_GREEN, GREEN), ('RRF로 순위 합치기', TINT_AMBER, 'B9770E'),
-         ('원본 cue로 되돌리기', TINT_GREEN, GREEN)]
+         ('질문과 가장 가까운 cue 고르기', TINT_GREEN, GREEN)]
 for i, (txt, tint, col) in enumerate(steps):
     y = 1.6 + i * 0.98
     card(s, 0.6, y, 5.9, 0.7, tint, line=col)
