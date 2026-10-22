@@ -13,10 +13,12 @@ SH, DG, LS = BASE / 'shots', BASE / 'diagrams', BASE / 'langsmith'
 OUT = BASE / 'G078_문희주_발표.pptx'
 
 FONT, MONO = 'Malgun Gothic', 'Consolas'
-NAVY, BLUE, GREEN, AMBER, GRAY = '1C2540', '3B6CF6', '2FA05F', 'E0951E', '6B7692'
-TINT_BLUE, TINT_GREEN, TINT_AMBER, TINT_GRAY, TINT_RED = 'EAF0FF', 'E6F6EC', 'FFF3DC', 'F1F3F7', 'FDECEC'
-INK, MUTED, WHITE = '1C2540', '5A6580', 'FFFFFF'
-CODE_BG, CODE_FG, CODE_HL, CODE_DIM = '1E2433', 'E6E9F2', 'FFD479', '8FA1C7'
+ACCENT, ACCENT_SOFT, ACCENT_MID = '2457D6', 'E8EEFC', '8FA8E8'
+NAVY, GRAY, LINE, SOFT = '1B2437', '6B7692', 'DDE2EC', 'F3F5F9'
+BLUE = GREEN = AMBER = ACCENT      # legacy names: every highlight uses the single accent
+TINT_BLUE = TINT_GREEN = TINT_AMBER = TINT_RED = TINT_GRAY = SOFT
+INK, MUTED, WHITE = '1B2437', '5B6577', 'FFFFFF'
+CODE_BG, CODE_FG, CODE_HL, CODE_DIM = '1E2433', 'E6E9F2', '9DB7FF', '8FA1C7'
 
 
 def rgb(h):
@@ -118,7 +120,20 @@ def code_box(slide, x, y, w, h, lines, hl=(), size=13, caption=None):
         tb(slide, x, y + h + 0.06, w, 0.3, [{'text': caption, 'size': 11, 'color': MUTED}])
 
 
-def table(slide, x, y, w, cols, rows, size=16, header_fill=NAVY, row_h=0.5, bold_first=False, hl_rows=()):
+def _bottom_rule(cell, color=LINE):
+    tcPr = cell._tc.get_or_add_tcPr()
+    for tag in ('a:lnL', 'a:lnR', 'a:lnT'):
+        ln = tcPr.makeelement(qn(tag), {'w': '0'}); ln.append(ln.makeelement(qn('a:noFill'), {})); tcPr.append(ln)
+    ln = tcPr.makeelement(qn('a:lnB'), {'w': '9525', 'cap': 'flat', 'cmpd': 'sng', 'algn': 'ctr'})
+    sf = ln.makeelement(qn('a:solidFill'), {}); clr = sf.makeelement(qn('a:srgbClr'), {'val': color}); sf.append(clr); ln.append(sf)
+    tcPr.append(ln)
+    # schema order: borders must precede the fill
+    fill = tcPr.find(qn('a:solidFill'))
+    if fill is not None:
+        tcPr.remove(fill); tcPr.append(fill)
+
+
+def table(slide, x, y, w, cols, rows, size=16, header_fill=SOFT, row_h=0.5, bold_first=False, hl_rows=(), align='center'):
     gt = slide.shapes.add_table(len(rows), len(cols), Inches(x), Inches(y), Inches(w), Inches(row_h * len(rows)))
     t = gt.table
     tblPr = gt._element.graphic.graphicData.tbl.tblPr
@@ -132,13 +147,14 @@ def table(slide, x, y, w, cols, rows, size=16, header_fill=NAVY, row_h=0.5, bold
             c.margin_top = c.margin_bottom = Inches(0.04)
             c.vertical_anchor = MSO_ANCHOR.MIDDLE
             c.fill.solid()
-            c.fill.fore_color.rgb = rgb(header_fill if i == 0 else (TINT_AMBER if i in hl_rows else (WHITE if i % 2 else 'F6F8FC')))
+            c.fill.fore_color.rgb = rgb(header_fill if i == 0 else (ACCENT_SOFT if i in hl_rows else WHITE))
+            _bottom_rule(c)
             tf = c.text_frame
             tf.word_wrap = True
             para = tf.paragraphs[0]
-            para.alignment = PP_ALIGN.LEFT if j == 0 else PP_ALIGN.CENTER
+            para.alignment = PP_ALIGN.LEFT if (j == 0 or align == 'left') else PP_ALIGN.CENTER
             r = para.add_run(); r.text = val
-            set_font(r, size, True if (i == 0 or (bold_first and j == 0)) else False, WHITE if i == 0 else INK)
+            set_font(r, size, True if (i == 0 or (bold_first and j == 0)) else False, INK)
     return gt
 
 
@@ -156,15 +172,14 @@ def chip(slide, x, y, w, h, text, fill, color=WHITE, size=14, bold=True):
 # =========================================================================== 1. cover
 n1 = ('안녕하세요, G078 문희주입니다. 제 과제는 WISH FINDER입니다. '
       '영상 속 장면이 어렴풋이만 기억날 때, 그 장면을 설명하면 영상의 정확한 시점을 찾아 주는 AI Agent입니다.')
-s = new_slide(dark=True, num='none', notes='[10초] ' + n1)
-tb(s, 0.8, 1.55, 6.8, 1.2, [{'text': 'WISH FINDER', 'size': 58, 'bold': True, 'color': WHITE}], anchor=MSO_ANCHOR.MIDDLE)
-tb(s, 0.8, 2.85, 6.6, 1.4, [{'text': '기억 속 장면을 찾아 주는', 'size': 28, 'color': 'CADCFC', 'after': 2},
-                            {'text': '근거 기반 AI Agent', 'size': 28, 'bold': True, 'color': 'CADCFC'}])
-chip(s, 0.8, 4.55, 2.9, 0.62, 'G078  문희주', BLUE, size=22)
-tb(s, 0.8, 5.4, 6.6, 0.9, [{'text': 'AI 서비스 Mini Project  ·  과제 2 (신규 Agent)', 'size': 18, 'color': 'AEB6CC', 'after': 4},
-                           {'text': '첫 적용 대상: NCT WISH 영상 3편', 'size': 18, 'color': 'AEB6CC'}])
-pic(s, SH / '01_home.png', 7.75, 1.25, w=5.05)
-tb(s, 0.6, 7.03, 6, 0.3, [{'text': 'G078 문희주  ·  WISH FINDER', 'size': 11, 'color': 'AEB6CC'}])
+s = new_slide(num='none', notes='[10초] ' + n1)
+tb(s, 0.8, 1.7, 6.8, 1.2, [{'text': 'WISH FINDER', 'size': 60, 'bold': True, 'color': INK}], anchor=MSO_ANCHOR.MIDDLE)
+tb(s, 0.8, 3.0, 6.6, 1.4, [{'text': '기억 속 장면을 찾아 주는', 'size': 28, 'color': MUTED, 'after': 2},
+                           {'text': '근거 기반 AI Agent', 'size': 28, 'bold': True, 'color': ACCENT}])
+chip(s, 0.8, 4.75, 2.9, 0.62, 'G078  문희주', ACCENT, size=22)
+tb(s, 0.8, 5.65, 6.6, 0.9, [{'text': 'AI 서비스 Mini Project  ·  과제 2 (신규 Agent)', 'size': 18, 'color': MUTED, 'after': 4},
+                           {'text': '첫 적용 대상: NCT WISH 영상 3편', 'size': 18, 'color': MUTED}])
+pic(s, SH / '01_home.png', 7.75, 1.3, w=5.05)
 
 # =========================================================================== 2. problem -> solution + tasks
 n2 = ('팬들은 "마니또를 뽑다가 자기 자신을 뽑은 장면"처럼 상황만 기억하고 제목이나 대사는 모릅니다. '
@@ -172,20 +187,19 @@ n2 = ('팬들은 "마니또를 뽑다가 자기 자신을 뽑은 장면"처럼 �
       '세부 task는 자막 파싱과 청킹, 하이브리드 검색, LangGraph Agent, MCP 서버, 웹 화면과 실시간 전송, 평가와 추적입니다. '
       '자막이 영어 번역본이고 화자 표시가 없어서 화자는 단정하지 않습니다.')
 s = new_slide('장면을 설명하면, 원본 자막으로 검증한 시점을 찾아 준다', notes='[40초] ' + n2)
-items = [('문제', TINT_RED, 'C0392B', '제목도 대사도 모르고\n"그 장면"만 기억난다'),
-         ('해결', TINT_GREEN, GREEN, '검색 → 원본 cue 대조 → 의미 판정\n→ 영상 시점과 앞뒤 자막'),
-         ('제약', TINT_AMBER, 'B9770E', '자막은 영어 번역본, 화자 표시 없음\n→ 화자는 단정하지 않는다')]
-for i, (head, tint, col, body) in enumerate(items):
-    y = 1.55 + i * 1.3
-    card(s, 0.6, y, 5.9, 1.2, tint)
-    chip(s, 0.85, y + 0.14, 0.95, 0.4, head, col, size=15)
-    tb(s, 0.85, y + 0.6, 5.5, 0.55, [{'text': body, 'size': 15, 'color': INK, 'line': 1.0}])
-pic(s, SH / '03_result_detail.png', 7.0, 1.55, w=5.8)
-tb(s, 7.0, 5.2, 5.8, 0.35, [{'text': '결과 화면: 검증된 장면 카드, 영상, 근거가 된 원본 앞뒤 자막', 'size': 12, 'color': MUTED}])
-tb(s, 0.6, 5.62, 6, 0.4, [{'text': '세부 task', 'size': 16, 'bold': True, 'color': NAVY}])
-tasks = [('파싱·청킹', GRAY), ('Hybrid 검색', GREEN), ('LangGraph', BLUE), ('MCP 서버', GREEN), ('API·Vue·SSE', AMBER), ('평가·추적', GRAY)]
-for i, (t, col) in enumerate(tasks):
-    chip(s, 0.6 + i * 2.03, 6.1, 1.93, 0.55, t, col, size=14)
+table(s, 0.6, 1.55, 6.3, [1.3, 5.0],
+      [['구분', '내용'],
+       ['문제', '제목도 대사도 모르고 "그 장면"만 기억난다'],
+       ['해결', '검색 → 원본 cue 대조 → 의미 판정 → 영상 시점과 앞뒤 자막'],
+       ['제약', '자막은 영어 번역본이고 화자 표시가 없어, 화자는 단정하지 않는다']],
+      size=15, row_h=0.8, bold_first=True, align='left')
+pic(s, SH / '03_result_detail.png', 7.2, 1.55, w=5.6)
+tb(s, 7.2, 5.05, 5.6, 0.3, [{'text': '결과 화면: 검증된 장면 카드, 영상, 원본 앞뒤 자막', 'size': 12, 'color': MUTED}])
+tb(s, 0.6, 5.0, 6, 0.4, [{'text': '세부 task', 'size': 16, 'bold': True, 'color': INK}])
+table(s, 0.6, 5.45, 12.2, [2.0, 2.04, 2.04, 2.04, 2.04, 2.04],
+      [['파싱·청킹', 'Hybrid 검색', 'LangGraph', 'MCP 서버', 'API·Vue·SSE', '평가·추적'],
+       ['cue 3,750 → 청크 869', 'BM25 + bge-m3, RRF', '6개 노드, 재검색 ≤ 2', '읽기 전용 도구 4개', '진행 단계 실시간', 'A/B/C 20문항']],
+      size=12, row_h=0.55)
 
 # =========================================================================== 3. results
 n3 = ('결과입니다. 같은 20문항 평가셋으로 Agent는 장면 질문 18개 중 16개를 1위로 맞혔고, 일반 검색은 11에서 15개였습니다. '
@@ -211,39 +225,38 @@ ch.font.size = Pt(14); ch.font.name = FONT
 pl = ch.plots[0]; pl.gap_width = 60; pl.has_data_labels = True
 dl = pl.data_labels; dl.font.size = Pt(18); dl.font.bold = True; dl.font.name = FONT; dl.position = XL_LABEL_POSITION.OUTSIDE_END
 dl.number_format = '0'; dl.number_format_is_linked = False
-for idx, col in enumerate((GRAY, BLUE, GREEN)):
+for idx, col in enumerate((GRAY, ACCENT_MID, ACCENT)):
     pt = pl.series[0].points[idx]; pt.format.fill.solid(); pt.format.fill.fore_color.rgb = rgb(col)
 va = ch.value_axis; va.maximum_scale = 18; va.minimum_scale = 0; va.major_unit = 6
 va.has_major_gridlines = True; va.major_gridlines.format.line.color.rgb = rgb('E3E7F1')
 va.format.line.fill.background(); va.tick_labels.font.size = Pt(13); va.tick_labels.font.color.rgb = rgb(MUTED)
 ch.category_axis.tick_labels.font.size = Pt(14); ch.category_axis.format.line.color.rgb = rgb('C9D0E0')
 tb(s, 7.9, 5.35, 4.9, 0.4, [{'text': '같은 영어 검색어 조건 · 1~5문항 차이, 1회 실행이라 우위 단정 안 함', 'size': 12, 'color': MUTED}])
-foot = [('0건', GREEN, TINT_GREEN, '근거 없이 화자를 단정한 경우'),
-        ('16 → 16', BLUE, TINT_BLUE, '이중 첫 검색을 켜도 같음, 검색만 80 → 98회 → 기본 꺼짐'),
-        ('20초/10초', BLUE, TINT_BLUE, '청크 길이 비교 후 유지 (30/15 이상은 하락)'),
-        ('한계', 'B9770E', TINT_AMBER, '후속 질문·번역 어휘 차이, Multi-Agent 미구현')]
+foot = [('0건', ACCENT, SOFT, '근거 없이 화자를 단정한 경우'),
+        ('16 → 16', ACCENT, SOFT, '이중 첫 검색을 켜도 같음, 검색만 80 → 98회 → 기본 꺼짐'),
+        ('20초/10초', ACCENT, SOFT, '청크 길이 비교 후 유지 (30/15 이상은 하락)'),
+        ('한계', INK, SOFT, '후속 질문·번역 어휘 차이, Multi-Agent 미구현')]
 for i, (big, col, tint, small) in enumerate(foot):
     x = 0.6 + i * 3.07
-    card(s, x, 5.85, 2.95, 1.05, tint)
-    tb(s, x + 0.15, 5.88, 2.65, 0.45, [{'text': big, 'size': 22, 'bold': True, 'color': col}], anchor=MSO_ANCHOR.MIDDLE)
-    tb(s, x + 0.15, 6.32, 2.65, 0.55, [{'text': small, 'size': 11, 'color': INK, 'line': 1.0}])
+    card(s, x, 5.78, 2.95, 1.15, tint)
+    tb(s, x + 0.15, 5.8, 2.65, 0.45, [{'text': big, 'size': 22, 'bold': True, 'color': col}], anchor=MSO_ANCHOR.MIDDLE)
+    tb(s, x + 0.15, 6.27, 2.65, 0.62, [{'text': small, 'size': 12, 'color': INK, 'line': 1.0}])
 
 # =========================================================================== 4. architecture + tech elements
 n4 = ('전체 구조입니다. 화면의 질문은 FastAPI를 거쳐 LangGraph Agent로 가고, Agent는 MCP 서버를 통해서만 자막을 조회합니다. '
       '이제 핵심 코드 세 가지, Agent Graph와 MCP, RAG를 설명드리겠습니다.')
 s = new_slide('LangGraph · MCP · RAG를 하나의 흐름으로 엮었다', notes='[15초] ' + n4)
 pic(s, DG / 'architecture.png', 0.5, 1.6, w=7.4, frame=False)
-rows = [('LangGraph', '분류 · 검색 · 검증 · 재검색 흐름', BLUE),
-        ('MCP', '공식 SDK 2.x, 로컬 stdio, 읽기 전용 도구 4개', GREEN),
-        ('RAG', 'BM25 + bge-m3 + RRF, 원본 cue 근거', GREEN),
-        ('의존성 주입', '생성자 주입, LLM을 환경변수로 교체', AMBER),
-        ('LangSmith', '노드·LLM 호출·토큰 추적', AMBER),
-        ('모듈화', 'agent · mcp · retrieval · services 분리', GRAY),
-        ('테스트', '백엔드 178개 · 프런트 43개', GRAY)]
-for i, (name, desc, col) in enumerate(rows):
-    y = 1.6 + i * 0.7
-    chip(s, 8.2, y, 1.55, 0.5, name, col, size=14)
-    tb(s, 9.9, y, 2.95, 0.5, [{'text': desc, 'size': 14, 'color': INK, 'line': 1.0}], anchor=MSO_ANCHOR.MIDDLE)
+table(s, 8.1, 1.6, 4.75, [1.55, 3.2],
+      [['구성', '내용'],
+       ['LangGraph', '분류 · 검색 · 검증 · 재검색 흐름'],
+       ['MCP', '공식 SDK 2.x, 로컬 stdio, 읽기 전용 도구 4개'],
+       ['RAG', 'BM25 + bge-m3 + RRF, 원본 cue 근거'],
+       ['의존성 주입', '생성자 주입, LLM을 환경변수로 교체'],
+       ['LangSmith', '노드·LLM 호출·토큰 추적'],
+       ['모듈화', 'agent · mcp · retrieval · services 분리'],
+       ['테스트', '백엔드 178개 · 프런트 43개']],
+      size=13, row_h=0.62, bold_first=True, align='left', hl_rows=(1, 2, 3))
 
 # =========================================================================== 5. agent graph
 n5 = ('Agent Graph입니다. 코드를 보면 StateGraph에 분류, 검색, 원본 대조, 판정, 재검색, 정리 여섯 노드를 add_node로 등록합니다. '
@@ -252,15 +265,14 @@ n5 = ('Agent Graph입니다. 코드를 보면 StateGraph에 분류, 검색, 원�
       'LLM이 판단하는 곳은 분류, 판정, 검색어 재작성 세 군데뿐이고, 인용과 시각은 코드가 원본 cue에서 만듭니다. Multi-Agent가 아닌 단일 워크플로입니다.')
 s = new_slide('Agent Graph: 경로는 코드가, 판단은 LLM이', notes='[65초] ' + n5)
 pic(s, DG / 'langgraph_flow.png', 0.5, 1.55, w=6.1, frame=False)
-pts = [('다음 노드는 조건 함수가 정한다', 'add_conditional_edges'),
-       ('LLM 판단은 세 곳', '분류 · 판정 · 검색어 재작성'),
-       ('인용·시각은 코드가 원본 cue에서 생성', 'LLM은 쓰지 않는다'),
-       ('단일 Agent 워크플로', 'Multi-Agent는 구현하지 않음 (4장 한계)'),
-       ('상한', '재검색 2번 · LLM 20초 · 전체 60초')]
-for i, (a, b) in enumerate(pts):
-    y = 4.05 + i * 0.58
-    tb(s, 0.6, y, 6.0, 0.55, [{'runs': [(a + '  ', {'bold': True, 'size': 15, 'color': NAVY}), (b, {'size': 14, 'color': MUTED})]}],
-       anchor=MSO_ANCHOR.MIDDLE)
+table(s, 0.6, 4.0, 6.1, [2.6, 3.5],
+      [['설계 원칙', '내용'],
+       ['다음 노드', '조건 함수가 정한다 (add_conditional_edges)'],
+       ['LLM 판단', '분류 · 판정 · 검색어 재작성, 세 곳'],
+       ['인용·시각', '코드가 원본 cue에서 생성, LLM은 쓰지 않음'],
+       ['구조', '단일 Agent 워크플로 (Multi-Agent 미구현)'],
+       ['상한', '재검색 2번 · LLM 20초 · 전체 60초']],
+      size=13, row_h=0.48, bold_first=True, align='left')
 GRAPH_CODE = [
     "graph = StateGraph(FinderState)",
     "for name in ['router', 'search', 'context',",
@@ -297,15 +309,13 @@ table(s, 0.6, 1.6, 6.2, [2.9, 3.3],
        ['get_scene_context', 'Agent · 원본 대조'],
        ['get_video_metadata', 'API 서버 · 시작 시'],
        ['get_cue_neighbors', '화면 · 앞뒤 자막']],
-      size=16, row_h=0.56, hl_rows=(1, 2))
-bul = [('공식 MCP SDK 2.x', '로컬 프로세스, stdio 통신'),
-       ('읽기 전용', '파일 경로를 인자로 받지 않는다'),
-       ('검색 결과를 믿지 않는다', '인용·시각은 원본 cue로 다시 확인')]
-for i, (a, b) in enumerate(bul):
-    y = 4.65 + i * 0.68
-    card(s, 0.6, y, 6.2, 0.58, TINT_BLUE)
-    tb(s, 0.8, y, 5.9, 0.58, [{'runs': [(a + '  ', {'bold': True, 'size': 15, 'color': NAVY}), (b, {'size': 14, 'color': MUTED})]}],
-       anchor=MSO_ANCHOR.MIDDLE)
+      size=16, row_h=0.56, hl_rows=(1, 2), align='left')
+table(s, 0.6, 4.65, 6.2, [2.6, 3.6],
+      [['원칙', '내용'],
+       ['공식 MCP SDK 2.x', '로컬 프로세스, stdio 통신'],
+       ['읽기 전용', '파일 경로를 인자로 받지 않는다'],
+       ['검색 결과를 믿지 않는다', '인용·시각은 원본 cue로 다시 확인']],
+      size=13, row_h=0.5, bold_first=True, align='left')
 MCP_CODE = [
     "@server.tool(structured_output=True)",
     "def search_transcripts(",
@@ -371,7 +381,7 @@ n8 = ('[백업] 질문 대비: 한계와 측정 결과. 한계는 세 가지입�
       '측정도 두 가지 마쳤습니다. 청크 길이는 20초와 10초를 유지했고, 이중 첫 검색은 16에서 16으로 이득이 없어 기본값을 끈 채 두었습니다. '
       '이후에는 서비스가 여러 장면을 연결해 조사하는 형태로 커질 때 Supervisor 구조를 비교하려고 합니다.')
 s = new_slide('[백업] 한계와 측정 결과: 구조보다 데이터가 문제였다', notes=n8)
-tb(s, 0.6, 1.5, 5.9, 0.45, [{'text': '한계와 트레이드오프', 'size': 20, 'bold': True, 'color': 'B9770E'}])
+tb(s, 0.6, 1.5, 5.9, 0.45, [{'text': '한계와 트레이드오프', 'size': 20, 'bold': True, 'color': INK}])
 tb(s, 6.85, 1.5, 5.9, 0.45, [{'text': '측정 결과와 이후', 'size': 20, 'bold': True, 'color': BLUE}])
 lim = [('Agent 우위가 불확실', '1~5문항 차이, 질문당 1회 실행'),
        ('지연과 토큰 증가', '평균 2.6초, 입력 토큰 +24%'),
@@ -387,9 +397,9 @@ for i in range(3):
     card(s, 6.85, y, 5.9, 1.12, TINT_BLUE)
     tb(s, 7.1, y + 0.1, 5.4, 0.95, [{'text': nxt[i][0], 'size': 18, 'bold': True, 'color': NAVY, 'after': 3},
                                     {'text': nxt[i][1], 'size': 15, 'color': MUTED}], anchor=MSO_ANCHOR.MIDDLE)
-card(s, 0.6, 5.95, 12.15, 0.9, NAVY)
+card(s, 0.6, 5.95, 12.15, 0.9, ACCENT_SOFT)
 tb(s, 0.9, 5.95, 11.6, 0.9, [{'text': '원인은 구조가 아니라 번역 자막의 단어("마니또" ↔ "Secret Santa")였다',
-                              'size': 19, 'bold': True, 'color': WHITE}], anchor=MSO_ANCHOR.MIDDLE)
+                              'size': 19, 'bold': True, 'color': ACCENT}], anchor=MSO_ANCHOR.MIDDLE)
 
 # =========================================================================== backup B1: LangSmith
 nb1 = '[백업] 질문 대비: LangSmith 추적. 평가 두 번의 합계가 트레이스 160개, 모델 호출 188회, 토큰 135.5K, 비용 $0.30입니다. 재검색이 있으면 지연·LLM 호출·토큰이 대략 두 배가 됩니다.'
@@ -432,7 +442,7 @@ tb(s, 7.2, 5.2, 5.6, 1.3, [{'text': '백엔드 178개 통과 · 프런트 43개 
 # =========================================================================== backup B3: dual first query
 nb3 = '[백업] 질문 대비: 이중 첫 검색. Router 검색어가 번역 어휘와 달라 못 찾던 질문을, 질문 원문도 함께 검색해 보완한 시도입니다. 구현 중 점수 합산 방식에서 정답이 밀리는 문제를 실제 자막으로 확인해 순위 교차 방식으로 바꿨습니다. 정답 평가셋 20문항으로 끈 실행과 켠 실행을 다시 측정했더니 1위 적중이 둘 다 16개로 같았고, 못 찾은 두 문항도 그대로였습니다. 검색만 80회에서 98회로 늘었고 LLM 호출과 토큰은 같아서 기본값은 꺼 두었습니다. 마니또처럼 못 찾던 질문이 찾아진 것은 평가셋 밖 직접 실행에서만 확인했습니다.'
 s = new_slide('[백업] 이중 첫 검색: 번역 어휘 차이를 질문 원문 검색으로 보완', notes=nb3)
-cols = [('문제', TINT_RED, 'C0392B', ['Router 검색어: "manitto"', '자막: "Secret Santa"', '→ 같은 의미인데 못 찾음']),
+cols = [('문제', TINT_RED, ACCENT, ['Router 검색어: "manitto"', '자막: "Secret Santa"', '→ 같은 의미인데 못 찾음']),
         ('방법', TINT_BLUE, BLUE, ['Router 검색어 + 질문 원문', '두 검색을 함께 실행하고', '순위를 번갈아 채워 후보 3개']),
         ('확인', TINT_GREEN, GREEN, ['마니또: 못 찾음 → 찾음', '대가: 질문당 약 1~2초 증가', '평가셋 20문항: 16 → 16, 이득 없음'])]
 for i, (head, tint, col, lines) in enumerate(cols):
@@ -458,7 +468,7 @@ table(s, 0.6, 1.55, 7.0, [1.9, 5.1],
        ['LangSmith', '노드·LLM 호출·토큰 추적'],
        ['모듈화', 'agent / mcp / retrieval / services'],
        ['단위 테스트', '백엔드 178 · 프런트 43']],
-      size=15, row_h=0.56, hl_rows=(1,))
+      size=15, row_h=0.56, hl_rows=(1,), align='left')
 card(s, 7.9, 1.55, 4.9, 4.5, TINT_BLUE)
 tb(s, 8.15, 1.7, 4.4, 4.2, [{'text': 'Multi-Agent를 쓰지 않은 이유', 'size': 17, 'bold': True, 'color': NAVY, 'after': 6},
                             {'text': '일이 순서대로 짧고 병렬로 할 일이 없다', 'size': 14, 'color': INK, 'after': 4},
