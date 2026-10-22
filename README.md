@@ -94,7 +94,7 @@ scripts/run_frontend.sh         # http://localhost:5173/ (127.0.0.1이 아닌 lo
 - OpenAI 모드는 `.env`에 `OPENAI_API_KEY`가 필요합니다. 기본 모델은 fast `gpt-4o-mini`(route·rewrite), quality `gpt-4o`(verify)이며 `OPENAI_FAST_MODEL`, `OPENAI_QUALITY_MODEL`로 바꿀 수 있습니다(`.env.example` 참고).
 - **OpenAI 모드는 사용자 질문과 검색 후보 자막 일부(최대 3구간, 각 20초 문맥)를 OpenAI API로 전송합니다.** 전체 자막은 전송하지 않습니다.
 - `/ready`의 `llm_backend`로 현재 백엔드와 모델을 확인할 수 있습니다.
-- `WISH_DUAL_QUERY=1`(`.env`)이면 첫 검색에서 Router 검색어와 사용자 원문을 함께 검색합니다(ADR-0011). 기본은 꺼짐이며 gold 정량 평가 전의 실험 기능입니다.
+- `WISH_DUAL_QUERY=1`(`.env`)이면 첫 검색에서 Router 검색어와 사용자 원문을 함께 검색합니다(ADR-0011). 기본은 꺼짐입니다. gold 20문항 재측정(2026-10-22)에서 Scene Success@1이 16/18로 같고 검색 호출만 늘어 켜지 않았습니다([ADR-0011](docs/adr/0011-dual-first-query.md)).
 - 수동 실행: `WISH_AGENT_ENABLED=1 WISH_LLM_BACKEND=ollama HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 .venv/bin/python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --workers 1`
 - 진단: `WISH_AGENT_TRACE=eval/private/traces`를 켜면 요청별 라운드 추적이 Git 제외 폴더에 남고, `.venv/bin/python scripts/show_trace.py`로 확인합니다.
 
